@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: core/util/progress_aggregator.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: core/util/progress_aggregator.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>
+define(["core/util/event_base"], 
+
+	/**
+	 * This module provides the ProgressAggregator class wich can be used to slice
+	 * and group arbitrary progress events into a unified view.
+	 *
+	 * @exports core/util/progress_aggregator
+	 */
+	function (EventBase) {
+
+		/**
+		 * Instantiate a new ProgressAggregator
+		 *
+		 * @class
+		 * @classdesc The ProgressAggregator class which organizes progress events.
+		 * @see {@link module:core/util/event_base~EventBase|EventBase} (Parent class)
+		 */
+		var ProgressAggregator = function(parent, max) {
+
+			// Initialize superclass
+			EventBase.call(this);
+
+			// Initialize parameters
+			this._parent = parent;
+			this._children = [];
+			this._value = 0;
+
+			this.max = max || 0;
+			this.value = 0;
+
+		}
+
+		// Subclass from EventBase
+		ProgressAggregator.prototype = Object.create( EventBase.prototype );
+
+		/**
+		 * Update the value of this node
+		 * 
+		 * @private
+		 */
+		ProgressAggregator.prototype._updateValue = function() {
+
+			// Firstly, update value based on children
+			this._value = 0;
+			for (var i=0; i&lt;this._children.length; i++) {
+				this._children[i]._updateValue();
+				this._value += this._children[i]._value;
+			}
+
+			// Then update value based on our current progress
+			if (this.max) {
+				this._value += (Math.min(this.value, this.max) / this.max);
+				this._value /= (this._children.length+1);
+			} else {
+				this._value /= this._children.length;
+			}
+
+		}
+
+		/**
+		 * Notify update all the way down to the root
+		 *
+		 * @private
+		 * @param {string} message - The message of the notification event
+		 */
+		ProgressAggregator.prototype._notifyUpdate = function(message) {
+			if (!this._parent) {
+				this._updateValue();
+				this.trigger("progress", this._value, message);
+				if ( Math.floor(this._value) == 1 )
+					this.trigger("completed");
+			} else {
+				this._parent._notifyUpdate(message);
+			}
+		}
+
+		/**
+		 * Notify an error all the way to root
+		 *
+		 * @private
+		 * @param {string} message - The error message for the notification
+		 */
+		ProgressAggregator.prototype._notifyError = function(message) {
+			if (!this._parent) {
+				this.trigger("error", message);
+			} else {
+				this._parent._notifyUpdate(message);
+			}
+		}
+
+		/**
+		 * Start a sub-task
+		 *
+		 * @param {int} max - The maximum number of steps this task contains
+		 * @returns {ProgressAggregator} - Returns a new progress aggregator object.
+		 */
+		ProgressAggregator.prototype.begin = function(max) {
+			var c = new ProgressAggregator(this, max || 1);
+			this._children.push(c);
+			return c;
+		}
+
+		/**
+		 * Forward a task as completed
+		 */
+		ProgressAggregator.prototype.ok = function(message) {
+			if (this.value &lt; this.max) {
+				this.value++;
+				this._notifyUpdate(message);
+			}
+		}
+		
+		/**
+		 * Mark the task as failed
+		 */
+		ProgressAggregator.prototype.fail = function(message) {
+			this._notifyError(message);
+		}
+
+		/**
+		 * Complete all possible tasks
+		 */
+		ProgressAggregator.prototype.complete = function(message) {
+			this.value = this.max;
+			this._notifyUpdate(message);
+		}
+
+		// Return progress aggreegator class
+		return ProgressAggregator;
+
+	}
+
+);</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Modules</h3><ul><li><a href="module-base_components_tuning_observable.html">base/components/tuning/observable</a></li><li><a href="module-base_components_tuning_tunable.html">base/components/tuning/tunable</a></li><li><a href="module-base_components_tuning_tuning_panel.html">base/components/tuning/tuning_panel</a></li><li><a href="module-basic_components_backdrop_explain.html">basic/components/backdrop_explain</a></li><li><a href="module-basic_components_backdrop_globe.html">basic/components/backdrop_globe</a></li><li><a href="module-basic_components_backdrop_home.html">basic/components/backdrop_home</a></li><li><a href="module-basic_components_backdrop_login.html">basic/components/backdrop_login</a></li><li><a href="module-basic_components_backdrop_machine.html">basic/components/backdrop_machine</a></li><li><a href="module-basic_components_backdrop_tuning.html">basic/components/backdrop_tuning</a></li><li><a href="module-basic_components_explain_book.html">basic/components/explain/book</a></li><li><a href="module-basic_components_explain_physics.html">basic/components/explain_physics</a></li><li><a href="module-basic_components_explain_screen.html">basic/components/explain_screen</a></li><li><a href="module-basic_components_nav_mini.html">basic/components/nav_mini</a></li><li><a href="module-basic_components_screem_courseroom.html">basic/components/screem_courseroom</a></li><li><a href="module-basic_components_screem_menu.html">basic/components/screem_menu</a></li><li><a href="module-basic_components_screem_team.html">basic/components/screem_team</a></li><li><a href="module-basic_components_screen_introgame.html">basic/components/screen_introgame</a></li><li><a href="module-basic_components_tvhead_agent.html">basic/components/tvhead_agent</a></li><li><a href="module-core_api_account.html">core/api/account</a></li><li><a href="module-core_api_chatroom.html">core/api/chatroom</a></li><li><a href="module-core_api_course.html">core/api/course</a></li><li><a href="module-core_api_interface.html">core/api/interface</a></li><li><a href="module-core_api_labsocket.html">core/api/labsocket</a></li><li><a href="module-core_api_labtrain.html">core/api/labtrain</a></li><li><a href="module-core_api_team.html">core/api/team</a></li><li><a href="module-core_apisocket.html">core/apisocket</a></li><li><a href="module-core_base_agent.html">core/base/agent</a></li><li><a href="module-core_base_component.html">core/base/component</a></li><li><a href="module-core_base_components.html">core/base/components</a></li><li><a href="module-core_base_data_widget.html">core/base/data_widget</a></li><li><a href="module-core_base_tuning_components.html">core/base/tuning_components</a></li><li><a href="module-core_base_view.html">core/base/view</a></li><li><a href="module-core_data_histogram_meta.html">core/data/histogram_meta</a></li><li><a href="module-core_db.html">core/db</a></li><li><a href="module-core_developer.html">core/developer</a></li><li><a href="module-core_feedback.html">core/feedback</a></li><li><a href="module-core_global.html">core/global</a></li><li><a href="module-core_modules_easing.html">core/modules/easing</a></li><li><a href="module-core_registry.html">core/registry</a></li><li><a href="module-core_ui.html">core/ui</a></li><li><a href="module-core_user.html">core/user</a></li><li><a href="module-core_util_animator.html">core/util/animator</a></li><li><a href="module-core_util_event_base.html">core/util/event_base</a></li><li><a href="module-core_util_math.html">core/util/math</a></li><li><a href="module-core_util_progress_aggregator.html">core/util/progress_aggregator</a></li><li><a href="module-liveq_BufferReader.html">liveq/BufferReader</a></li><li><a href="module-liveq_Calculate.html">liveq/Calculate</a></li><li><a href="module-liveq_HistogramData.html">liveq/HistogramData</a></li><li><a href="module-liveq_LabProtocol.html">liveq/LabProtocol</a></li><li><a href="module-liveq_LabSocket.html">liveq/LabSocket</a></li><li><a href="module-liveq_main.html">liveq/main</a></li><li><a href="module-liveq_ReferenceData.html">liveq/ReferenceData</a></li><li><a href="module-vas-basic_components_onscreen.html">vas-basic/components/onscreen</a></li><li><a href="module-vas-basic_components_running_screen.html">vas-basic/components/running_screen</a></li><li><a href="module-vas-basic_components_screen_bsod.html">vas-basic/components/screen_bsod</a></li><li><a href="module-vas-basic_components_tuning_screen.html">vas-basic/components/tuning_screen</a></li><li><a href="module-vas-basic_data_trainhisto.html">vas-basic/data/trainhisto</a></li><li><a href="module-vas-basic_dataviz_histogram.html">vas-basic/dataviz/histogram</a></li><li><a href="module-vas-basic_dataviz_histogram_full.html">vas-basic/dataviz/histogram_full</a></li><li><a href="module-vas-basic_dataviz_observable.html">vas-basic/dataviz/observable</a></li><li><a href="module-vas-basic_infoblock_knowledge.html">vas-basic/infoblock/knowledge</a></li><li><a href="module-vas-basic_infoblock_observable.html">vas-basic/infoblock/observable</a></li><li><a href="module-vas-basic_infoblock_tunable.html">vas-basic/infoblock/tunable</a></li><li><a href="module-vas-basic_machineparts_describe.html">vas-basic/machineparts/describe</a></li><li><a href="module-vas-basic_machineparts_paper.html">vas-basic/machineparts/paper</a></li><li><a href="module-vas-basic_machineparts_results.html">vas-basic/machineparts/results</a></li><li><a href="module-vas-basic_overlay_buy.html">vas-basic/overlay/buy</a></li><li><a href="module-vas-basic_overlay_feedback.html">vas-basic/overlay/feedback</a></li><li><a href="module-vas-basic_overlay_flash.html">vas-basic/overlay/flash</a></li><li><a href="module-vas-basic_overlay_jobstatus.html">vas-basic/overlay/jobstatus</a></li><li><a href="module-vas-basic_overlay_publicpapers.html">vas-basic/overlay/publicpapers</a></li><li><a href="module-vas-basic_overlay_SwitchTeam.html">vas-basic/overlay/SwitchTeam</a></li><li><a href="module-vas-basic_overlays_help.html">vas-basic/overlays/help</a></li><li><a href="module-vas-basic_profileparts_achievements.html">vas-basic/profileparts/achievements</a></li><li><a href="module-vas-basic_profileparts_books.html">vas-basic/profileparts/books</a></li><li><a href="module-vas-basic_profileparts_papers.html">vas-basic/profileparts/papers</a></li><li><a href="module-vas-basic_profileparts_team.html">vas-basic/profileparts/team</a></li><li><a href="module-vas-basic_profileparts_user.html">vas-basic/profileparts/user</a></li></ul><h3>Classes</h3><ul><li><a href="LiveQ.HistogramData.html">HistogramData</a></li><li><a href="module-basic_components_backdrop_explain-ExplainBackdrop.html">ExplainBackdrop</a></li><li><a href="module-basic_components_backdrop_globe-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-basic_components_backdrop_home-HomeBackdrop.html">HomeBackdrop</a></li><li><a href="module-basic_components_backdrop_home-PaswordReset.html">PaswordReset</a></li><li><a href="module-basic_components_backdrop_login-LoginBackdrop.html">LoginBackdrop</a></li><li><a href="module-basic_components_backdrop_machine-MachineBackdrop.html">MachineBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ProgressBackdrop.html">ProgressBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ResultsBackdrop.html">ResultsBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-TuningBackdrop.html">TuningBackdrop</a></li><li><a href="module-basic_components_explain_book-ExplainBook.html">ExplainBook</a></li><li><a href="module-basic_components_explain_physics-ExplainBlackboard.html">ExplainBlackboard</a></li><li><a href="module-basic_components_explain_physics-ExplainPhysics.html">ExplainPhysics</a></li><li><a href="module-basic_components_explain_screen-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-basic_components_explain_screen-HomeScreen.html">HomeScreen</a></li><li><a href="module-basic_components_explain_screen-JobsScreen.html">JobsScreen</a></li><li><a href="module-basic_components_explain_screen-KnowledgeScreen.html">KnowledgeScreen</a></li><li><a href="module-basic_components_explain_screen-StatsTutorial.html">StatsTutorial</a></li><li><a href="module-basic_components_explain_screen-TuningScreen.html">TuningScreen</a></li><li><a href="module-basic_components_nav_mini-NavMini.html">NavMini</a></li><li><a href="module-basic_components_screem_courseroom-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-basic_components_screem_menu-MenuScreen.html">MenuScreen</a></li><li><a href="module-basic_components_screem_team-TeamScreen.html">TeamScreen</a></li><li><a href="module-basic_components_screen_introgame-IntroGameScreen.html">IntroGameScreen</a></li><li><a href="module-basic_components_tvhead_agent-TVhead.html">TVhead</a></li><li><a href="module-core_base_agent-VisualAgent.html">VisualAgent</a></li><li><a href="module-core_base_components-Backdrop.html">Backdrop</a></li><li><a href="module-core_base_components-BookScreen.html">BookScreen</a></li><li><a href="module-core_base_components-BSODScreen.html">BSODScreen</a></li><li><a href="module-core_base_components-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-core_base_components-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-core_base_components-ExplainScreen.html">ExplainScreen</a></li><li><a href="module-core_base_components-HomeScreen.html">HomeScreen</a></li><li><a href="module-core_base_components-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-core_base_components-LoginScreen.html">LoginScreen</a></li><li><a href="module-core_base_components-Nav.html">Nav</a></li><li><a href="module-core_base_components-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-core_base_components-PasswordResetScreen.html">PasswordResetScreen</a></li><li><a href="module-core_base_components-Popup.html">Popup</a></li><li><a href="module-core_base_components-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-core_base_components-QuestionaireScreen.html">QuestionaireScreen</a></li><li><a href="module-core_base_components-RegisterScreen.html">RegisterScreen</a></li><li><a href="module-core_base_components-ResultsScreen.html">ResultsScreen</a></li><li><a href="module-core_base_components-RunningScreen.html">RunningScreen</a></li><li><a href="module-core_base_components-TeamScreen.html">TeamScreen</a></li><li><a href="module-core_base_components-TuningScreen.html">TuningScreen</a></li><li><a href="module-core_base_components-TutorialScreen.html">TutorialScreen</a></li><li><a href="module-core_base_component-Component.html">Component</a></li><li><a href="module-core_base_data_widget-DataWidget.html">DataWidget</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html">ObservableWidget</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html">TunableWidget</a></li><li><a href="module-core_base_tuning_components-TuningPanel.html">TuningPanel</a></li><li><a href="module-core_base_view-View.html">View</a></li><li><a href="module-core_data_histogram_meta-HistogramMetadata.html">HistogramMetadata</a></li><li><a href="module-core_util_animator-Animator.html">Animator</a></li><li><a href="module-core_util_event_base-EventBase.html">EventBase</a></li><li><a href="module-core_util_math-CoreMath.html">CoreMath</a></li><li><a href="module-core_util_progress_aggregator-ProgressAggregator.html">ProgressAggregator</a></li><li><a href="module-liveq_BufferReader-BufferReader.html">BufferReader</a></li><li><a href="module-liveq_HistogramData-HistogramData.html">HistogramData</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html">LabProtocol</a></li><li><a href="module-liveq_LabSocket-LabSocket.html">LabSocket</a></li><li><a href="module-liveq_ReferenceData-ReferenceData.html">ReferenceData</a></li><li><a href="module-vas-basic_components_running_screen-LoginScreen.html">LoginScreen</a></li><li><a href="module-vas-basic_components_running_screen-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-BSODScreen.html">BSODScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-vas-basic_dataviz_histogram-PlotHistogram.html">PlotHistogram</a></li><li><a href="Sequencer.html">Sequencer</a></li></ul><h3>Events</h3><ul><li><a href="module-core_api_labsocket-APILabSocket.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runError">runError</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:completed">completed</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:runError">runError</a></li><li><a href="module-core_base_components-CinematicScreen.html#event:completed">completed</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openGame">openGame</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openURL">openURL</a></li><li><a href="module-core_base_components-HomeScreen.html#event:changeScreen">changeScreen</a></li><li><a href="module-core_base_components-HomeScreen.html#event:playLevel">playLevel</a></li><li><a href="module-core_base_components-LoginScreen.html#event:login">login</a></li><li><a href="module-core_base_components-RunningScreen.html#event:abortRun">abortRun</a></li><li><a href="module-core_base_components-TuningScreen.html#event:changeParameters">changeParameters</a></li><li><a href="module-core_base_components-TuningScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-TuningScreen.html#event:submitParameters">submitParameters</a></li><li><a href="module-core_base_data_widget-DataWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:blurVisualAid">blurVisualAid</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:completed">completed</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:focusVisualAid">focusVisualAid</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:dataArrived">dataArrived</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramAdded">histogramAdded</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramRemoved">histogramRemoved</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramsUpdated">histogramsUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramUpdated">histogramUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:metadataUpdated">metadataUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:ready">ready</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:connected">connected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:error">error</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:log">log</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runError">runError</a></li></ul><h3>Namespaces</h3><ul><li><a href="module-liveq_Calculate-Calculate.html">Calculate</a></li></ul><h3>Global</h3><ul><li><a href="global.html#chi2-bounds">chi2-bounds</a></li><li><a href="global.html#core">core</a></li><li><a href="global.html#css">css</a></li><li><a href="global.html#db">db</a></li><li><a href="global.html#dom-host">dom-host</a></li><li><a href="global.html#enforce_http">enforce_http</a></li><li><a href="global.html#forum_vas_api">forum_vas_api</a></li><li><a href="global.html#images_url">images_url</a></li><li><a href="global.html#liveq">liveq</a></li><li><a href="global.html#version">version</a></li><li><a href="global.html#voiceapi">voiceapi</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.3.0-beta1</a> on Wed Jul 29 2015 18:29:46 GMT+0200 (CEST)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

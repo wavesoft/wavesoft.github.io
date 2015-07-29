@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: tootr_editor/js/editable-hotspots.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: tootr_editor/js/editable-hotspots.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>define(
+
+	["jquery", "jquery-ui", "fabric", "tweenjs", "core/db", "tootr/hotspots"],
+
+	function($, $ui, fabric, createjs, DB, Hotspots) {
+
+		var lastID = 0;
+		
+		/**
+		 * 
+		 */
+		var EditableHotspots = function(hostDOM, propertiesDOM) {
+			Hotspots.call(this, hostDOM);
+			this.propertiesDOM = propertiesDOM;
+
+			window.hs = this;
+
+			this.draggingElm = null;
+			this.dragIndex = -1;
+			this.dragX = 0;
+			this.dragY = 0;
+			this.dragSrcX = 0;
+			this.dragSrcY = 0;
+			this.focusedElement = null;
+
+			// Hotspot element configuration
+			this.hsConfig = [];
+
+			// Discard on mouseup
+			this.hostDOM.mouseup((function(e) {
+				this.draggingElm = null;
+			}).bind(this));
+
+			// Handle dragging
+			this.hostDOM.mousemove((function(e) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.dragMove( e.pageX, e.pageY );
+			}).bind(this));
+
+			//
+			// Prepare hotspots UI
+			//
+
+			this.propertiesDOM.append($('&lt;div class="header">&lt;span class="glyphicon glyphicon-hand-up">&lt;/span> Hotspot List&lt;/div>'))
+			
+			// Prepare items list
+			this.elmList = $('&lt;ul class="items">&lt;/ul>');
+			this.propertiesDOM.append(this.elmList);
+
+			// Prepare form host
+			var fHost = $('&lt;div class="container">&lt;/div>'),
+				fForm = $('&lt;form>&lt;/form>');
+				fHost.append(fForm);
+				this.propertiesDOM.append(fForm);
+
+			// Prepare edit form
+			var row = $('&lt;div class="row">&lt;/div>'),
+				lLeft = $('&lt;label for="hs-name">&lt;/label>'),
+				cLeft = $('&lt;div class="col-xs-4">&lt;/div>'),
+				cRight = $('&lt;div class="col-xs-8">&lt;/div>');
+				cLeft.append(lLeft);
+				row.append(cLeft);
+				row.append(cRight);
+				fForm.append(row);
+
+			lLeft.text("Name:");
+			this.txtLabel = $('&lt;input id="hs-name" type="text" class="form-control input-sm" value="" />');
+			cRight.append(this.txtLabel);
+
+			var row = $('&lt;div class="row">&lt;/div>'),
+				lLeft = $('&lt;label for="hs-short">&lt;/label>'),
+				cLeft = $('&lt;div class="col-xs-4">&lt;/div>'),
+				cRight = $('&lt;div class="col-xs-8">&lt;/div>');
+				cLeft.append(lLeft);
+				row.append(cLeft);
+				row.append(cRight);
+				fForm.append(row);
+
+			lLeft.text("Label:");
+			this.txtShort = $('&lt;input id="hs-short" type="text" class="form-control input-sm" value="" />');
+			cRight.append(this.txtShort);
+
+			var row = $('&lt;div class="row">&lt;/div>'),
+				lLeft = $('&lt;label for="hs-book">&lt;/label>'),
+				cLeft = $('&lt;div class="col-xs-4">&lt;/div>'),
+				cRight = $('&lt;div class="col-xs-8">&lt;/div>');
+				cLeft.append(lLeft);
+				row.append(cLeft);
+				row.append(cRight);
+				fForm.append(row);
+
+			lLeft.text("Book ID:");
+			this.txtBook = $('&lt;input id="hs-book" type="text" class="form-control input-sm" value="" />');
+			cRight.append(this.txtBook);
+
+			// Prepare buttons
+			var btnHost = $('&lt;div class="btn-host">&lt;/div>');
+			this.btnAdd = $('&lt;button class="btn btn-success btn-sm">&lt;span class="glyphicon glyphicon-plus">&lt;/span> Add&lt;/button>');
+			this.btnRemove = $('&lt;button class="btn btn-danger btn-sm">&lt;span class="glyphicon glyphicon-remove">&lt;/span>&lt;/button>');
+			this.btnSave = $('&lt;button class="btn btn-default btn-sm pull-right">&lt;span class="glyphicon glyphicon-floppy-disk">&lt;/span> Save Changes&lt;/button>');
+			btnHost.append( this.btnAdd );
+			btnHost.append( this.btnRemove );
+			btnHost.append( this.btnSave );
+			this.propertiesDOM.append( btnHost );
+
+			// Handle button events
+			this.btnAdd.click((function(e) {
+
+				// Do some tests
+				if (!this.txtLabel.val()) {
+					alert("Please specify a name for this hotspot!");
+					return;
+				}
+				if (!this.txtShort.val()) {
+					alert("Please specify a short label for this hotspot!");
+					return;
+				}
+
+				// Add hotspot
+				this.addHotspot({
+					'x': 50, 'y': 50,
+					'label': this.txtLabel.val(),
+					'short': this.txtShort.val(),
+					'book': this.txtBook.val()
+				});
+
+				// Clear fields
+				this.txtLabel.val("");
+				this.txtShort.val("");
+				this.txtBook.val("");
+
+			}).bind(this));
+			this.btnRemove.click((function(e) {
+
+				// Validate
+				if (this.dragIndex>=0) {
+
+					// Delete items from DOM
+					this.hsConfig[this.dragIndex]._listElement.remove();
+					this.hotspotElms[this.dragIndex].remove();
+
+					// Remove item configuration
+					this.hsConfig.splice(this.dragIndex,1);
+					this.hotspotElms.splice(this.dragIndex,1);
+
+					// Unfocus
+					this.focusItem(-1);
+
+				}
+
+			}).bind(this));
+			this.btnSave.click((function(e) {
+
+				// Validate
+				if (this.dragIndex>=0) {
+
+					// Update config
+					this.hsConfig[this.dragIndex].label = this.txtLabel.val();
+					this.hsConfig[this.dragIndex].short = this.txtShort.val();
+					this.hsConfig[this.dragIndex].book = this.txtBook.val();
+
+					// Update List Item
+					this.updateLI( this.dragIndex );
+
+					console.log("Update #",this.dragIndex,":",this.hsConfig[this.dragIndex]);
+
+				}
+
+			}).bind(this));
+
+			// Initialize sortables
+			$( this.elmList ).sortable({
+				'update': (function(e,ui) {
+
+					// Re-order elements based on their y-position
+					var orderConfig = [],
+						orderElements = [],
+						seq = $( this.elmList ).sortable( "toArray" );
+
+					// Use IDs from sortables in order to sort the config
+					for (var i=0; i&lt;seq.length; i++) {
+						for (var j=0; j&lt;this.hsConfig.length; j++) {
+							if (this.hsConfig[j]._id == seq[i]) {
+								orderConfig.push(this.hsConfig[j]);
+								orderElements.push(this.hotspotElms[j]);
+							}
+						}
+					}
+
+					// Update
+					this.hotspotElms = orderElements;
+					this.hsConfig = orderConfig;
+
+				}).bind(this)
+			});
+
+		}
+
+		// Subclass from Hotspots
+		EditableHotspots.prototype = Object.create( Hotspots.prototype );
+
+		/**
+		 * Clear everything
+		 */
+		EditableHotspots.prototype.clear = function() {
+			this.hsConfig = [];
+			this.hotspotElms = [];
+			this.elmList.empty();
+			this.hostDOM.empty();
+		}
+
+		/**
+		 * Select item
+		 */
+		EditableHotspots.prototype.focusItem = function( elm ) {
+
+			// Mark item as focused
+			for (var i=0; i&lt;this.hsConfig.length; i++) {
+				if (i == elm) {
+					this.hsConfig[i]._listElement.addClass("active");
+				} else {
+					this.hsConfig[i]._listElement.removeClass("active");
+				}
+			}
+
+			// Populate text fields
+			if (elm&lt;0){
+				this.txtShort.val( "" );
+				this.txtLabel.val( "" );
+				this.txtBook.val( "" );
+			} else {
+				this.txtShort.val( this.hsConfig[elm].short );
+				this.txtLabel.val( this.hsConfig[elm].label );
+				this.txtBook.val( this.hsConfig[elm].book );
+			}
+
+		}
+
+		/**
+		 * Start dragging an element
+		 */
+		EditableHotspots.prototype.setActive = function( active ) {
+			if (active) {
+				this.hostDOM.removeClass("disabled");
+			} else {
+				this.hostDOM.addClass("disabled");
+			}
+		}
+
+		/**
+		 * Start dragging an element
+		 */
+		EditableHotspots.prototype.startDrag = function( elm, x, y ) {
+			this.draggingElm = elm;
+			this.dragSrcX = parseInt( $(elm).css("left") );
+			this.dragSrcY = parseInt( $(elm).css("top") );
+			this.dragX = x;
+			this.dragY = y;
+		}
+
+		/**
+		 * Handle mouse movement for dragging
+		 */
+		EditableHotspots.prototype.dragMove = function( x, y ) {
+			// Move element bbeing dragged
+			if (this.draggingElm != null) {
+				var w = $(this.draggingElm).width(),
+					h = $(this.draggingElm).height(),
+					l = this.dragSrcX + (x - this.dragX),
+					t = this.dragSrcY + (y - this.dragY);
+
+				// Update position
+				this.draggingElm.css({
+					'left': l,
+					'top': t
+				});
+
+				// Update x/y position
+				this.hsConfig[this.dragIndex].x = l+w/2;
+				this.hsConfig[this.dragIndex].y = t+h/2;
+
+				console.log("Update #",this.dragIndex,":",this.hsConfig[this.dragIndex]);
+
+			}
+		}
+
+
+		/**
+		 * Update entry element
+		 */
+		EditableHotspots.prototype.updateLI = function( at ) {
+			var cfg = this.hsConfig[at];
+
+			// Update label
+			cfg._listElement.find(".s-label").text(cfg.label);
+			cfg._listElement.find(".s-short").text(cfg.short);
+
+		}
+
+		/**
+		 * Override addHotspot in order to handle additional information
+		 */
+		EditableHotspots.prototype.addHotspot = function( config ) {
+			var elm = Hotspots.prototype.addHotspot.call( this, config );
+
+			// Default move cursor
+			elm.css({'cursor': 'move'});
+
+			// Setup dragging
+			elm.mousedown((function(e) {
+				e.preventDefault();
+				e.stopPropagation();
+
+				this.dragIndex = -1;
+				for (var i=0; i&lt;this.hotspotElms.length; i++) {
+					if (elm.is(this.hotspotElms[i])) {
+						this.dragIndex = i;
+						this.focusItem( i );
+						break;
+					}
+				}
+
+				var ofs = $(elm).offset();
+				this.startDrag(elm, e.pageX, e.pageY);
+			}).bind(this));
+
+			// Add item reflection
+			var listItem = $('&lt;li>&lt;span class="glyphicon glyphicon-move">&lt;/span> &lt;span class="s-label">'+config.label+'&lt;/span> &lt;span class="s-short">'+config.short+'&lt;/span>&lt;/li>');
+			this.elmList.append(listItem);
+			config._listElement = listItem;
+			listItem.mousedown((function(e) {
+				for (var i=0; i&lt;this.hotspotElms.length; i++) {
+					if (elm.is(this.hotspotElms[i])) {
+						this.focusItem( i );
+						break;
+					}
+				}
+			}).bind(this));
+
+			// Create an ID for sorted items mapping
+			var id = 'sort-elm-' + (++lastID);
+			config._id = id;
+			listItem.attr('id', id);
+
+			// Update sortable
+			$( this.elmList ).sortable('refresh');
+
+			// Store hotspot config
+			this.hsConfig.push(config);
+
+			return elm;
+		}
+
+		/**
+		 * Export to JSON
+		 */
+		EditableHotspots.prototype.toJSON = function() {
+			var ans = [],
+				relevantProps = ['x','y','label','short','book'];
+
+			// Collect relevant properties from the configuration
+			for (var i=0; i&lt;this.hsConfig.length; i++) {
+
+				// Collect only relevant properties
+				var p = {};
+				for (var j=0; j&lt;relevantProps.length; j++) {
+					p[relevantProps[j]] = this.hsConfig[i][relevantProps[j]];
+				}
+
+				// Collect
+				ans.push(p);
+
+			}
+
+			// Return them
+			return ans;
+		}
+
+		// Return hotspots overlay class
+		return EditableHotspots;
+
+	}
+
+)</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Modules</h3><ul><li><a href="module-base_components_tuning_observable.html">base/components/tuning/observable</a></li><li><a href="module-base_components_tuning_tunable.html">base/components/tuning/tunable</a></li><li><a href="module-base_components_tuning_tuning_panel.html">base/components/tuning/tuning_panel</a></li><li><a href="module-basic_components_backdrop_explain.html">basic/components/backdrop_explain</a></li><li><a href="module-basic_components_backdrop_globe.html">basic/components/backdrop_globe</a></li><li><a href="module-basic_components_backdrop_home.html">basic/components/backdrop_home</a></li><li><a href="module-basic_components_backdrop_login.html">basic/components/backdrop_login</a></li><li><a href="module-basic_components_backdrop_machine.html">basic/components/backdrop_machine</a></li><li><a href="module-basic_components_backdrop_tuning.html">basic/components/backdrop_tuning</a></li><li><a href="module-basic_components_explain_book.html">basic/components/explain/book</a></li><li><a href="module-basic_components_explain_physics.html">basic/components/explain_physics</a></li><li><a href="module-basic_components_explain_screen.html">basic/components/explain_screen</a></li><li><a href="module-basic_components_nav_mini.html">basic/components/nav_mini</a></li><li><a href="module-basic_components_screem_courseroom.html">basic/components/screem_courseroom</a></li><li><a href="module-basic_components_screem_menu.html">basic/components/screem_menu</a></li><li><a href="module-basic_components_screem_team.html">basic/components/screem_team</a></li><li><a href="module-basic_components_screen_introgame.html">basic/components/screen_introgame</a></li><li><a href="module-basic_components_tvhead_agent.html">basic/components/tvhead_agent</a></li><li><a href="module-core_api_account.html">core/api/account</a></li><li><a href="module-core_api_chatroom.html">core/api/chatroom</a></li><li><a href="module-core_api_course.html">core/api/course</a></li><li><a href="module-core_api_interface.html">core/api/interface</a></li><li><a href="module-core_api_labsocket.html">core/api/labsocket</a></li><li><a href="module-core_api_labtrain.html">core/api/labtrain</a></li><li><a href="module-core_api_team.html">core/api/team</a></li><li><a href="module-core_apisocket.html">core/apisocket</a></li><li><a href="module-core_base_agent.html">core/base/agent</a></li><li><a href="module-core_base_component.html">core/base/component</a></li><li><a href="module-core_base_components.html">core/base/components</a></li><li><a href="module-core_base_data_widget.html">core/base/data_widget</a></li><li><a href="module-core_base_tuning_components.html">core/base/tuning_components</a></li><li><a href="module-core_base_view.html">core/base/view</a></li><li><a href="module-core_data_histogram_meta.html">core/data/histogram_meta</a></li><li><a href="module-core_db.html">core/db</a></li><li><a href="module-core_developer.html">core/developer</a></li><li><a href="module-core_feedback.html">core/feedback</a></li><li><a href="module-core_global.html">core/global</a></li><li><a href="module-core_modules_easing.html">core/modules/easing</a></li><li><a href="module-core_registry.html">core/registry</a></li><li><a href="module-core_ui.html">core/ui</a></li><li><a href="module-core_user.html">core/user</a></li><li><a href="module-core_util_animator.html">core/util/animator</a></li><li><a href="module-core_util_event_base.html">core/util/event_base</a></li><li><a href="module-core_util_math.html">core/util/math</a></li><li><a href="module-core_util_progress_aggregator.html">core/util/progress_aggregator</a></li><li><a href="module-liveq_BufferReader.html">liveq/BufferReader</a></li><li><a href="module-liveq_Calculate.html">liveq/Calculate</a></li><li><a href="module-liveq_HistogramData.html">liveq/HistogramData</a></li><li><a href="module-liveq_LabProtocol.html">liveq/LabProtocol</a></li><li><a href="module-liveq_LabSocket.html">liveq/LabSocket</a></li><li><a href="module-liveq_main.html">liveq/main</a></li><li><a href="module-liveq_ReferenceData.html">liveq/ReferenceData</a></li><li><a href="module-vas-basic_components_onscreen.html">vas-basic/components/onscreen</a></li><li><a href="module-vas-basic_components_running_screen.html">vas-basic/components/running_screen</a></li><li><a href="module-vas-basic_components_screen_bsod.html">vas-basic/components/screen_bsod</a></li><li><a href="module-vas-basic_components_tuning_screen.html">vas-basic/components/tuning_screen</a></li><li><a href="module-vas-basic_data_trainhisto.html">vas-basic/data/trainhisto</a></li><li><a href="module-vas-basic_dataviz_histogram.html">vas-basic/dataviz/histogram</a></li><li><a href="module-vas-basic_dataviz_histogram_full.html">vas-basic/dataviz/histogram_full</a></li><li><a href="module-vas-basic_dataviz_observable.html">vas-basic/dataviz/observable</a></li><li><a href="module-vas-basic_infoblock_knowledge.html">vas-basic/infoblock/knowledge</a></li><li><a href="module-vas-basic_infoblock_observable.html">vas-basic/infoblock/observable</a></li><li><a href="module-vas-basic_infoblock_tunable.html">vas-basic/infoblock/tunable</a></li><li><a href="module-vas-basic_machineparts_describe.html">vas-basic/machineparts/describe</a></li><li><a href="module-vas-basic_machineparts_paper.html">vas-basic/machineparts/paper</a></li><li><a href="module-vas-basic_machineparts_results.html">vas-basic/machineparts/results</a></li><li><a href="module-vas-basic_overlay_buy.html">vas-basic/overlay/buy</a></li><li><a href="module-vas-basic_overlay_feedback.html">vas-basic/overlay/feedback</a></li><li><a href="module-vas-basic_overlay_flash.html">vas-basic/overlay/flash</a></li><li><a href="module-vas-basic_overlay_jobstatus.html">vas-basic/overlay/jobstatus</a></li><li><a href="module-vas-basic_overlay_publicpapers.html">vas-basic/overlay/publicpapers</a></li><li><a href="module-vas-basic_overlay_SwitchTeam.html">vas-basic/overlay/SwitchTeam</a></li><li><a href="module-vas-basic_overlays_help.html">vas-basic/overlays/help</a></li><li><a href="module-vas-basic_profileparts_achievements.html">vas-basic/profileparts/achievements</a></li><li><a href="module-vas-basic_profileparts_books.html">vas-basic/profileparts/books</a></li><li><a href="module-vas-basic_profileparts_papers.html">vas-basic/profileparts/papers</a></li><li><a href="module-vas-basic_profileparts_team.html">vas-basic/profileparts/team</a></li><li><a href="module-vas-basic_profileparts_user.html">vas-basic/profileparts/user</a></li></ul><h3>Classes</h3><ul><li><a href="LiveQ.HistogramData.html">HistogramData</a></li><li><a href="module-basic_components_backdrop_explain-ExplainBackdrop.html">ExplainBackdrop</a></li><li><a href="module-basic_components_backdrop_globe-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-basic_components_backdrop_home-HomeBackdrop.html">HomeBackdrop</a></li><li><a href="module-basic_components_backdrop_home-PaswordReset.html">PaswordReset</a></li><li><a href="module-basic_components_backdrop_login-LoginBackdrop.html">LoginBackdrop</a></li><li><a href="module-basic_components_backdrop_machine-MachineBackdrop.html">MachineBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ProgressBackdrop.html">ProgressBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ResultsBackdrop.html">ResultsBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-TuningBackdrop.html">TuningBackdrop</a></li><li><a href="module-basic_components_explain_book-ExplainBook.html">ExplainBook</a></li><li><a href="module-basic_components_explain_physics-ExplainBlackboard.html">ExplainBlackboard</a></li><li><a href="module-basic_components_explain_physics-ExplainPhysics.html">ExplainPhysics</a></li><li><a href="module-basic_components_explain_screen-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-basic_components_explain_screen-HomeScreen.html">HomeScreen</a></li><li><a href="module-basic_components_explain_screen-JobsScreen.html">JobsScreen</a></li><li><a href="module-basic_components_explain_screen-KnowledgeScreen.html">KnowledgeScreen</a></li><li><a href="module-basic_components_explain_screen-StatsTutorial.html">StatsTutorial</a></li><li><a href="module-basic_components_explain_screen-TuningScreen.html">TuningScreen</a></li><li><a href="module-basic_components_nav_mini-NavMini.html">NavMini</a></li><li><a href="module-basic_components_screem_courseroom-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-basic_components_screem_menu-MenuScreen.html">MenuScreen</a></li><li><a href="module-basic_components_screem_team-TeamScreen.html">TeamScreen</a></li><li><a href="module-basic_components_screen_introgame-IntroGameScreen.html">IntroGameScreen</a></li><li><a href="module-basic_components_tvhead_agent-TVhead.html">TVhead</a></li><li><a href="module-core_base_agent-VisualAgent.html">VisualAgent</a></li><li><a href="module-core_base_components-Backdrop.html">Backdrop</a></li><li><a href="module-core_base_components-BookScreen.html">BookScreen</a></li><li><a href="module-core_base_components-BSODScreen.html">BSODScreen</a></li><li><a href="module-core_base_components-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-core_base_components-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-core_base_components-ExplainScreen.html">ExplainScreen</a></li><li><a href="module-core_base_components-HomeScreen.html">HomeScreen</a></li><li><a href="module-core_base_components-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-core_base_components-LoginScreen.html">LoginScreen</a></li><li><a href="module-core_base_components-Nav.html">Nav</a></li><li><a href="module-core_base_components-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-core_base_components-PasswordResetScreen.html">PasswordResetScreen</a></li><li><a href="module-core_base_components-Popup.html">Popup</a></li><li><a href="module-core_base_components-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-core_base_components-QuestionaireScreen.html">QuestionaireScreen</a></li><li><a href="module-core_base_components-RegisterScreen.html">RegisterScreen</a></li><li><a href="module-core_base_components-ResultsScreen.html">ResultsScreen</a></li><li><a href="module-core_base_components-RunningScreen.html">RunningScreen</a></li><li><a href="module-core_base_components-TeamScreen.html">TeamScreen</a></li><li><a href="module-core_base_components-TuningScreen.html">TuningScreen</a></li><li><a href="module-core_base_components-TutorialScreen.html">TutorialScreen</a></li><li><a href="module-core_base_component-Component.html">Component</a></li><li><a href="module-core_base_data_widget-DataWidget.html">DataWidget</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html">ObservableWidget</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html">TunableWidget</a></li><li><a href="module-core_base_tuning_components-TuningPanel.html">TuningPanel</a></li><li><a href="module-core_base_view-View.html">View</a></li><li><a href="module-core_data_histogram_meta-HistogramMetadata.html">HistogramMetadata</a></li><li><a href="module-core_util_animator-Animator.html">Animator</a></li><li><a href="module-core_util_event_base-EventBase.html">EventBase</a></li><li><a href="module-core_util_math-CoreMath.html">CoreMath</a></li><li><a href="module-core_util_progress_aggregator-ProgressAggregator.html">ProgressAggregator</a></li><li><a href="module-liveq_BufferReader-BufferReader.html">BufferReader</a></li><li><a href="module-liveq_HistogramData-HistogramData.html">HistogramData</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html">LabProtocol</a></li><li><a href="module-liveq_LabSocket-LabSocket.html">LabSocket</a></li><li><a href="module-liveq_ReferenceData-ReferenceData.html">ReferenceData</a></li><li><a href="module-vas-basic_components_running_screen-LoginScreen.html">LoginScreen</a></li><li><a href="module-vas-basic_components_running_screen-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-BSODScreen.html">BSODScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-vas-basic_dataviz_histogram-PlotHistogram.html">PlotHistogram</a></li><li><a href="Sequencer.html">Sequencer</a></li></ul><h3>Events</h3><ul><li><a href="module-core_api_labsocket-APILabSocket.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runError">runError</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:completed">completed</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:runError">runError</a></li><li><a href="module-core_base_components-CinematicScreen.html#event:completed">completed</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openGame">openGame</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openURL">openURL</a></li><li><a href="module-core_base_components-HomeScreen.html#event:changeScreen">changeScreen</a></li><li><a href="module-core_base_components-HomeScreen.html#event:playLevel">playLevel</a></li><li><a href="module-core_base_components-LoginScreen.html#event:login">login</a></li><li><a href="module-core_base_components-RunningScreen.html#event:abortRun">abortRun</a></li><li><a href="module-core_base_components-TuningScreen.html#event:changeParameters">changeParameters</a></li><li><a href="module-core_base_components-TuningScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-TuningScreen.html#event:submitParameters">submitParameters</a></li><li><a href="module-core_base_data_widget-DataWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:blurVisualAid">blurVisualAid</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:completed">completed</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:focusVisualAid">focusVisualAid</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:dataArrived">dataArrived</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramAdded">histogramAdded</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramRemoved">histogramRemoved</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramsUpdated">histogramsUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramUpdated">histogramUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:metadataUpdated">metadataUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:ready">ready</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:connected">connected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:error">error</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:log">log</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runError">runError</a></li></ul><h3>Namespaces</h3><ul><li><a href="module-liveq_Calculate-Calculate.html">Calculate</a></li></ul><h3>Global</h3><ul><li><a href="global.html#chi2-bounds">chi2-bounds</a></li><li><a href="global.html#core">core</a></li><li><a href="global.html#css">css</a></li><li><a href="global.html#db">db</a></li><li><a href="global.html#dom-host">dom-host</a></li><li><a href="global.html#enforce_http">enforce_http</a></li><li><a href="global.html#forum_vas_api">forum_vas_api</a></li><li><a href="global.html#images_url">images_url</a></li><li><a href="global.html#liveq">liveq</a></li><li><a href="global.html#version">version</a></li><li><a href="global.html#voiceapi">voiceapi</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.3.0-beta1</a> on Wed Jul 29 2015 18:29:46 GMT+0200 (CEST)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

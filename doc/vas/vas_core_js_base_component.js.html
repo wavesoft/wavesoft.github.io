@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: vas/core/js/base/component.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: vas/core/js/base/component.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>
+define(["jquery", "core/util/event_base", "core/ui/view", "vas/config"], 
+
+	/**
+	 * This module provides the base component class which is used for derriving all of the
+	 * user interface widgets and screens.
+	 *
+	 * @exports core/base/component
+	 */
+	function ($, EventBase, View, config) {
+
+		/**
+		 * Instantiate a new componet
+		 *
+		 * @class
+		 * @classdesc The base Component class. All other components are derrived from this.
+		 * @param {DOMElement} hostDOM - The DOM element where the component should be hosted in
+		 * @see {@link module:core/util/event_base~EventBase|EventBase} (Parent class)
+		 */
+		var Component = function( hostDOM ) {
+
+			// Initialize superclass
+			EventBase.call(this);
+			View.call(this);
+
+			// Keep reference of the host DOM element
+			this.hostDOM = hostDOM;
+
+			// Put the edit button
+			this.editBtn = $('&lt;a href="#" class="btn-edit-component">&lt;span class="glyphicon glyphicon-edit">&lt;/span>&lt;/a>')
+				.appendTo(hostDOM)
+				.click((function(e) {
+					e.stopPropagation();
+					e.preventDefault();
+
+					var name = this.__registryID;
+					require(["vas/core/developer"], function(Developer) {
+						Developer.editComponent(name);
+					});
+				}).bind(this))
+
+			// Prepare properties
+			this.width = 0;
+			this.height = 0;
+			this.left = 0;
+			this.top = 0;
+			this.anchor = { 'left': 0, 'top': 0 };
+
+			// Helper arrays for keeping reference of the
+			// objects to forward events to.
+			this.__forwardVisualEventsComponents = [];
+			this.__forwardEventsMap = {};
+
+		}
+
+		// Subclass from EventBase
+		Component.prototype = Object.create( EventBase.prototype );
+
+		/**
+		 * This function is called when the component is about to be
+		 * hidden. The callback parameter MUST be fired when the component
+		 * is ready for hiding.
+		 *
+		 * @param {function} cb_ready - Callback to be fired when the component is ready for hiding.
+		 */
+		Component.prototype.onWillHide = function(cb_ready) {
+			cb_ready();
+		};
+
+		/**
+		 * This function is called when the component is about to be
+		 * shown. The callback parameter MUST be fired when the component
+		 * is ready for hiding.
+		 *
+		 * @param {function} cb_ready - Callback to be fired when the component is ready for display.
+		 */
+		Component.prototype.onWillShow = function(cb_ready) {
+			cb_ready();
+		};
+
+		/**
+		 * This function is called when the component is hidden
+		 */
+		Component.prototype.onHidden = function() {
+		};
+
+		/**
+		 * This function is called when the component is shown
+		 */
+		Component.prototype.onShown = function() {
+		};
+
+		/**
+		 * This function is called when the host DOM element is resized
+		 *
+		 * @param {integer} width - The new width of the component
+		 * @param {integer} height - The new height of the component
+		 */
+		Component.prototype.onResize = function(width, height) {
+			this.width = width;
+			this.height = height;
+		};
+
+		/**
+		 * This function is called when the host DOM element is moved
+		 *
+		 * @param {integer} left - The new left position of the component
+		 * @param {integer} top - The new top position of the component
+		 */
+		Component.prototype.onMove = function(left, top) {
+			this.left = left;
+			this.top = top;
+		};
+
+		/**
+		 * This function is called when
+		 */
+		Component.prototype.onAnchorUpdate = function(left, top) {
+			this.anchor.left = left;
+			this.anchor.top = top;
+		}
+
+		/**
+		 * This function is used to provide a fixed-size dimentions for the
+		 * componenet -if it supports such-.
+		 *
+		 * This function should return either an array with the dimentions as
+		 * a [width, height] pair or **undefined** if it does not have any fixed dimentions.
+		 *
+		 */
+		Component.prototype.getPreferredSize = function() {
+			return undefined;
+		};
+
+		/**
+		 * Fire the willshow/show sequence
+		 */
+		Component.prototype.show = function(cb) {
+			this.onWillShow((function() {
+				this.onShown();
+				if (cb) {
+					cb();
+					this.trigger('shown');
+				}
+			}).bind(this));
+		}
+
+		/**
+		 * Fire the willhide/hidden sequence
+		 */
+		Component.prototype.hide = function(cb) {
+			this.onWillHide((function() {
+				this.onHidden();
+				if (cb) { 
+					cb();
+					this.trigger('hidden');
+				}
+			}).bind(this));
+		}
+
+		/**
+		 * Receive part or all events of the specified component and adopt them
+		 * as our own.
+		 *
+		 * @param {Component|array} com - The child component to receive events from
+		 * @param {string|array} events - (Optional) The names of the events to receive. If not specified, all the events are forwarded.
+		 *
+		 */
+		Component.prototype.adoptEvents = function(com, events) {
+			if (events &amp;&amp; !(events instanceof Array)) events = [events];
+			if (!(com instanceof Array)) com = [com];
+			for (var j=0; j&lt;com.length; j++) {
+				var ccom = com[j];
+				if (!ccom) continue;
+
+				// Forward all events if no events are defined
+				if (!events) {
+					ccom.forwardAllEventsTo( this );
+				} 
+
+				// Otherwise explicitly forward part of the events
+				else {
+					for (var i=0; i&lt;events.length; i++) {
+						ccom.on(events[i], (function(evName) {
+							return (function() {
+								var args = Array.prototype.slice.call(arguments);
+								args.unshift(evName);
+								this.trigger.apply( this, args );
+							}).bind(this);
+						}).bind(this)(events[i]) );
+					}
+				}
+
+			}
+		}
+
+		/**
+		 * Forward particular events to the given component.
+		 *
+		 * This function will forward all the events specified in the events
+		 * array, and it will optionally fire the specified helper function in order
+		 * to translate the arguments when needed.
+		 *
+		 * @example &lt;caption>Map function example&lt;/caption>
+		 * myCom.forwardEvents( childCom, 'onResize', function(com,event,args) {
+		 *    // Return half dimentions to all HalfSized components
+		 *    if (com instanceof Components.HalfSized) {
+		 *       return [ args[0]/2, args[1]/2 ];
+		 *    } else {
+		 *       return args;
+		 *    }
+		 * });
+		 * @param {Component|array} com - The component to forward events to
+		 * @param {string|array} events - The names of the events to forward (ex. onResize)
+		 * @param {function} mapFunction - (Optional) The argument translation funtion
+		 */
+		Component.prototype.forwardEvents = function(com, events, mapFunction) {
+			if (!(events instanceof Array)) events = [events];
+			if (!(com instanceof Array)) com = [com];
+			var defaultMapFunction = function(com, event, args) { return args; };
+
+			for (var j=0; j&lt;com.length; j++) {
+				var ccom = com[j];
+				if (!ccom) continue;
+
+				for (var i=0; i&lt;events.length; i++) {
+					var evName = events[i];
+
+					// Override the default function only once
+					if (this.__forwardEventsMap[evName] == undefined) {
+
+						this.__forwardEventsMap[evName] = [[ ccom, mapFunction || defaultMapFunction ]];
+
+						// Keep the original function
+						var origFunction = this[evName].bind(this);
+
+						// Context wrapper
+						this[evName] = (function(evName,origFunction) {
+
+							// Function to replace with
+							return function() {
+								var args = Array.prototype.slice.call(arguments),
+									fwComs = this.__forwardEventsMap[evName];
+
+								// Loop over forwardable components
+								for (var i=0; i&lt;fwComs.length; i++) {
+									var com = fwComs[i][0], mapFn = fwComs[i][1];
+									if (com[evName])
+										com[evName].apply( com, mapFn( fwComs[i], evName, args ) );
+								}
+
+								// Fire the origianl function
+								origFunction.apply( this, args );
+
+							}
+
+						}).bind(this)(evName, origFunction);
+
+					} else {
+
+						// Every next call, updates the __forwardEventsMap
+						this.__forwardEventsMap[evName].push([ ccom, mapFunction || defaultMapFunction ]);
+
+					}
+				}
+			}
+		}
+
+		/**
+		 * Forward visual events to the specified component.
+		 *
+		 * This function will forward and automatically manage the following events:
+		 *
+		 *  * onShown()
+		 *  * onHidden()
+		 *  * onWillShow()
+		 *  * onWillHide()
+		 *
+		 * This function can also calculate the dimentions of the child component and
+		 * automatically fire the onResize and onMove events accordingly. To do so, it requires
+		 * additional information regarding the component position. 
+		 *
+		 * Format of sizeInfo object:
+		 *  {
+		 *    'left' : 10,		// Left position in pixels if number is integer
+		 *    'top'  : '50%',	// Top position in percent if contains '%' symbol
+		 *
+		 *    // Either this:
+		 *    'right' : 10,
+		 *    'bottom': 10,
+		 *
+		 *    // Or this:
+		 *    'width' : '100%',
+		 *    'height': '50%',
+		 *
+		 *  }
+		 *
+		 *
+		 * @param {Component|array} com - The component to forward events to
+		 * @param {Object} - sizeInfo - (Optional) Alignment information to use for onResize
+		 */
+		Component.prototype.forwardVisualEvents = function(com, sizeInfo) {
+			if (!(com instanceof Array)) com=[com];
+			if (sizeInfo) {
+				if (!(sizeInfo instanceof Array)) {
+					var si=sizeInfo; sizeInfo=[];
+					for (var i=0; i&lt;com.length; i++)
+						sizeInfo.push(si);
+				} else {
+					if (sizeInfo.length != com.length) {
+						console.error("Mismatching array dimentions between components and size information!");
+						return;
+					}
+				}
+			}
+
+			// Utility function to convert relative scales to numers
+			var getValue = function( value, relValue, defValue ) {
+				if (!value) return defValue;
+				if (value.indexOf('%') &lt; 0) {
+					return parseInt(value);
+				} else {
+					return parseInt(value) * relValue / 100;
+				}
+			}
+			var handleAnchorSizes = function( obj, length, kwA, kwB, kwT ) {
+				var vA = ( obj[kwA] == undefined ) ? false : getValue( obj[kwA], length, 0 ), // Left/Top
+					vB = ( obj[kwB] == undefined ) ? false : getValue( obj[kwB], length, 0 ), // Right/Bottom
+					vT = ( obj[kwT] == undefined ) ? false : getValue( obj[kwT], length, 0 ); // Width/Height
+
+				if ((vA === false) &amp;&amp; (vB === false) &amp;&amp; (vT === false)) { // Nothing
+					return [0, length];
+				} else if ((vA !== false) &amp;&amp; (vB === false) &amp;&amp; (vT === false)) { // Left only
+					return [vA, length-vA];
+				} else if ((vA === false) &amp;&amp; (vB !== false) &amp;&amp; (vT === false)) { // Right only
+					return [0, length-vB];
+				} else if ((vA === false) &amp;&amp; (vB === false) &amp;&amp; (vT !== false)) { // Width only
+					return [0, vT];
+				} else if ((vA !== false) &amp;&amp; (vB !== false) &amp;&amp; (vT === false)) { // Left+Right
+					return [vA, length-vA-vB];
+				} else if ((vA !== false) &amp;&amp; (vB === false) &amp;&amp; (vT !== false)) { // Left+Width
+					return [vA, vT];
+				} else if ((vA === false) &amp;&amp; (vB !== false) &amp;&amp; (vT !== false)) { // Right+Width
+					return [length-vT-vB, vT];
+				}
+			}
+
+			for (var j=0; j&lt;com.length; j++) {
+				if (!com[j]) continue;
+
+				// Stack elements
+				if (sizeInfo) {
+					this.__forwardVisualEventsComponents.push({ 'com':com[j], 'sz': sizeInfo[j] });
+				} else {
+					this.__forwardVisualEventsComponents.push({ 'com':com[j], 'sz': null });
+				}
+
+				// Override the appropriate onXX functions only once
+				if (this.__forwardVisualEventsComponents.length == 1) {
+					
+					// Keep reference of the originals
+					var self = this,
+						origOnShown = this.onShown.bind(this),
+						origOnHidden = this.onHidden.bind(this),
+						origOnWillShow = this.onWillShow.bind(this),
+						origOnWillHide = this.onWillHide.bind(this),
+						origOnResize = this.onResize.bind(this),
+						origOnMove = this.onMove.bind(this);
+
+					// Override
+					this.onShown = function() {
+						for (var i=0; i&lt;self.__forwardVisualEventsComponents.length; i++) {
+							self.__forwardVisualEventsComponents[i].com.onShown();
+						}
+						origOnShown();
+					}
+					this.onHidden = function() {
+						for (var i=0; i&lt;self.__forwardVisualEventsComponents.length; i++) {
+							self.__forwardVisualEventsComponents[i].com.onHidden();
+						}
+						origOnHidden();
+					}
+					this.onWillShow = function(cb) {
+						var c = self.__forwardVisualEventsComponents.length;
+						for (var i=0; i&lt;self.__forwardVisualEventsComponents.length; i++) {
+							self.__forwardVisualEventsComponents[i].com.onWillShow(function() {
+								if (--c == 0) origOnWillShow(cb);
+							});
+						}
+					}
+					this.onWillHide = function(cb) {
+						var c = self.__forwardVisualEventsComponents.length;
+						for (var i=0; i&lt;self.__forwardVisualEventsComponents.length; i++) {
+							self.__forwardVisualEventsComponents[i].com.onWillHide(function() {
+								if (--c == 0) origOnWillHide(cb);
+							});
+						}
+					}
+					this.onResize = function(w,h) {
+						this.width = w;
+						this.height = h;
+						origOnResize(w,h);
+						var c = self.__forwardVisualEventsComponents.length;
+						for (var i=0; i&lt;self.__forwardVisualEventsComponents.length; i++) {
+							var r = self.__forwardVisualEventsComponents[i];
+							if (r.sz) {
+								var lw = handleAnchorSizes( r.sz, this.width, 'left', 'right', 'width' ),
+									th = handleAnchorSizes( r.sz, this.height, 'top', 'bottom', 'height' );
+								r.com.onMove(lw[0],th[0]);
+								r.com.onResize(lw[1],th[1]);
+							}
+						}
+					}
+					this.onMove = function(x,y) {
+						this.left = x;
+						this.top = y;
+						origOnMove(x,y);
+						var c = self.__forwardVisualEventsComponents.length;
+						for (var i=0; i&lt;self.__forwardVisualEventsComponents.length; i++) {
+							var r = self.__forwardVisualEventsComponents[i];
+							if (r.sz) {
+								var lw = handleAnchorSizes( r.sz, this.width, 'left', 'right', 'width' ),
+									th = handleAnchorSizes( r.sz, this.height, 'top', 'bottom', 'height' );
+								r.com.onMove(lw[0],th[0]);
+								r.com.onResize(lw[1],th[1]);
+							}
+						}
+					}
+
+				}
+
+			}
+
+		};
+
+
+		// Return component
+		return Component;
+
+	}
+
+);</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Modules</h3><ul><li><a href="module-base_components_tuning_observable.html">base/components/tuning/observable</a></li><li><a href="module-base_components_tuning_tunable.html">base/components/tuning/tunable</a></li><li><a href="module-base_components_tuning_tuning_panel.html">base/components/tuning/tuning_panel</a></li><li><a href="module-basic_components_backdrop_explain.html">basic/components/backdrop_explain</a></li><li><a href="module-basic_components_backdrop_globe.html">basic/components/backdrop_globe</a></li><li><a href="module-basic_components_backdrop_home.html">basic/components/backdrop_home</a></li><li><a href="module-basic_components_backdrop_login.html">basic/components/backdrop_login</a></li><li><a href="module-basic_components_backdrop_machine.html">basic/components/backdrop_machine</a></li><li><a href="module-basic_components_backdrop_tuning.html">basic/components/backdrop_tuning</a></li><li><a href="module-basic_components_explain_book.html">basic/components/explain/book</a></li><li><a href="module-basic_components_explain_physics.html">basic/components/explain_physics</a></li><li><a href="module-basic_components_explain_screen.html">basic/components/explain_screen</a></li><li><a href="module-basic_components_nav_mini.html">basic/components/nav_mini</a></li><li><a href="module-basic_components_screem_courseroom.html">basic/components/screem_courseroom</a></li><li><a href="module-basic_components_screem_menu.html">basic/components/screem_menu</a></li><li><a href="module-basic_components_screem_team.html">basic/components/screem_team</a></li><li><a href="module-basic_components_screen_introgame.html">basic/components/screen_introgame</a></li><li><a href="module-basic_components_tvhead_agent.html">basic/components/tvhead_agent</a></li><li><a href="module-core_api_account.html">core/api/account</a></li><li><a href="module-core_api_chatroom.html">core/api/chatroom</a></li><li><a href="module-core_api_course.html">core/api/course</a></li><li><a href="module-core_api_interface.html">core/api/interface</a></li><li><a href="module-core_api_labsocket.html">core/api/labsocket</a></li><li><a href="module-core_api_labtrain.html">core/api/labtrain</a></li><li><a href="module-core_api_team.html">core/api/team</a></li><li><a href="module-core_apisocket.html">core/apisocket</a></li><li><a href="module-core_base_agent.html">core/base/agent</a></li><li><a href="module-core_base_component.html">core/base/component</a></li><li><a href="module-core_base_components.html">core/base/components</a></li><li><a href="module-core_base_data_widget.html">core/base/data_widget</a></li><li><a href="module-core_base_tuning_components.html">core/base/tuning_components</a></li><li><a href="module-core_base_view.html">core/base/view</a></li><li><a href="module-core_data_histogram_meta.html">core/data/histogram_meta</a></li><li><a href="module-core_db.html">core/db</a></li><li><a href="module-core_developer.html">core/developer</a></li><li><a href="module-core_feedback.html">core/feedback</a></li><li><a href="module-core_global.html">core/global</a></li><li><a href="module-core_modules_easing.html">core/modules/easing</a></li><li><a href="module-core_registry.html">core/registry</a></li><li><a href="module-core_ui.html">core/ui</a></li><li><a href="module-core_user.html">core/user</a></li><li><a href="module-core_util_animator.html">core/util/animator</a></li><li><a href="module-core_util_event_base.html">core/util/event_base</a></li><li><a href="module-core_util_math.html">core/util/math</a></li><li><a href="module-core_util_progress_aggregator.html">core/util/progress_aggregator</a></li><li><a href="module-liveq_BufferReader.html">liveq/BufferReader</a></li><li><a href="module-liveq_Calculate.html">liveq/Calculate</a></li><li><a href="module-liveq_HistogramData.html">liveq/HistogramData</a></li><li><a href="module-liveq_LabProtocol.html">liveq/LabProtocol</a></li><li><a href="module-liveq_LabSocket.html">liveq/LabSocket</a></li><li><a href="module-liveq_main.html">liveq/main</a></li><li><a href="module-liveq_ReferenceData.html">liveq/ReferenceData</a></li><li><a href="module-vas-basic_components_onscreen.html">vas-basic/components/onscreen</a></li><li><a href="module-vas-basic_components_running_screen.html">vas-basic/components/running_screen</a></li><li><a href="module-vas-basic_components_screen_bsod.html">vas-basic/components/screen_bsod</a></li><li><a href="module-vas-basic_components_tuning_screen.html">vas-basic/components/tuning_screen</a></li><li><a href="module-vas-basic_data_trainhisto.html">vas-basic/data/trainhisto</a></li><li><a href="module-vas-basic_dataviz_histogram.html">vas-basic/dataviz/histogram</a></li><li><a href="module-vas-basic_dataviz_histogram_full.html">vas-basic/dataviz/histogram_full</a></li><li><a href="module-vas-basic_dataviz_observable.html">vas-basic/dataviz/observable</a></li><li><a href="module-vas-basic_infoblock_knowledge.html">vas-basic/infoblock/knowledge</a></li><li><a href="module-vas-basic_infoblock_observable.html">vas-basic/infoblock/observable</a></li><li><a href="module-vas-basic_infoblock_tunable.html">vas-basic/infoblock/tunable</a></li><li><a href="module-vas-basic_machineparts_describe.html">vas-basic/machineparts/describe</a></li><li><a href="module-vas-basic_machineparts_paper.html">vas-basic/machineparts/paper</a></li><li><a href="module-vas-basic_machineparts_results.html">vas-basic/machineparts/results</a></li><li><a href="module-vas-basic_overlay_buy.html">vas-basic/overlay/buy</a></li><li><a href="module-vas-basic_overlay_feedback.html">vas-basic/overlay/feedback</a></li><li><a href="module-vas-basic_overlay_flash.html">vas-basic/overlay/flash</a></li><li><a href="module-vas-basic_overlay_jobstatus.html">vas-basic/overlay/jobstatus</a></li><li><a href="module-vas-basic_overlay_publicpapers.html">vas-basic/overlay/publicpapers</a></li><li><a href="module-vas-basic_overlay_SwitchTeam.html">vas-basic/overlay/SwitchTeam</a></li><li><a href="module-vas-basic_overlays_help.html">vas-basic/overlays/help</a></li><li><a href="module-vas-basic_profileparts_achievements.html">vas-basic/profileparts/achievements</a></li><li><a href="module-vas-basic_profileparts_books.html">vas-basic/profileparts/books</a></li><li><a href="module-vas-basic_profileparts_papers.html">vas-basic/profileparts/papers</a></li><li><a href="module-vas-basic_profileparts_team.html">vas-basic/profileparts/team</a></li><li><a href="module-vas-basic_profileparts_user.html">vas-basic/profileparts/user</a></li></ul><h3>Classes</h3><ul><li><a href="LiveQ.HistogramData.html">HistogramData</a></li><li><a href="module-basic_components_backdrop_explain-ExplainBackdrop.html">ExplainBackdrop</a></li><li><a href="module-basic_components_backdrop_globe-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-basic_components_backdrop_home-HomeBackdrop.html">HomeBackdrop</a></li><li><a href="module-basic_components_backdrop_home-PaswordReset.html">PaswordReset</a></li><li><a href="module-basic_components_backdrop_login-LoginBackdrop.html">LoginBackdrop</a></li><li><a href="module-basic_components_backdrop_machine-MachineBackdrop.html">MachineBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ProgressBackdrop.html">ProgressBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ResultsBackdrop.html">ResultsBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-TuningBackdrop.html">TuningBackdrop</a></li><li><a href="module-basic_components_explain_book-ExplainBook.html">ExplainBook</a></li><li><a href="module-basic_components_explain_physics-ExplainBlackboard.html">ExplainBlackboard</a></li><li><a href="module-basic_components_explain_physics-ExplainPhysics.html">ExplainPhysics</a></li><li><a href="module-basic_components_explain_screen-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-basic_components_explain_screen-HomeScreen.html">HomeScreen</a></li><li><a href="module-basic_components_explain_screen-JobsScreen.html">JobsScreen</a></li><li><a href="module-basic_components_explain_screen-KnowledgeScreen.html">KnowledgeScreen</a></li><li><a href="module-basic_components_explain_screen-StatsTutorial.html">StatsTutorial</a></li><li><a href="module-basic_components_explain_screen-TuningScreen.html">TuningScreen</a></li><li><a href="module-basic_components_nav_mini-NavMini.html">NavMini</a></li><li><a href="module-basic_components_screem_courseroom-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-basic_components_screem_menu-MenuScreen.html">MenuScreen</a></li><li><a href="module-basic_components_screem_team-TeamScreen.html">TeamScreen</a></li><li><a href="module-basic_components_screen_introgame-IntroGameScreen.html">IntroGameScreen</a></li><li><a href="module-basic_components_tvhead_agent-TVhead.html">TVhead</a></li><li><a href="module-core_base_agent-VisualAgent.html">VisualAgent</a></li><li><a href="module-core_base_components-Backdrop.html">Backdrop</a></li><li><a href="module-core_base_components-BookScreen.html">BookScreen</a></li><li><a href="module-core_base_components-BSODScreen.html">BSODScreen</a></li><li><a href="module-core_base_components-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-core_base_components-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-core_base_components-ExplainScreen.html">ExplainScreen</a></li><li><a href="module-core_base_components-HomeScreen.html">HomeScreen</a></li><li><a href="module-core_base_components-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-core_base_components-LoginScreen.html">LoginScreen</a></li><li><a href="module-core_base_components-Nav.html">Nav</a></li><li><a href="module-core_base_components-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-core_base_components-PasswordResetScreen.html">PasswordResetScreen</a></li><li><a href="module-core_base_components-Popup.html">Popup</a></li><li><a href="module-core_base_components-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-core_base_components-QuestionaireScreen.html">QuestionaireScreen</a></li><li><a href="module-core_base_components-RegisterScreen.html">RegisterScreen</a></li><li><a href="module-core_base_components-ResultsScreen.html">ResultsScreen</a></li><li><a href="module-core_base_components-RunningScreen.html">RunningScreen</a></li><li><a href="module-core_base_components-TeamScreen.html">TeamScreen</a></li><li><a href="module-core_base_components-TuningScreen.html">TuningScreen</a></li><li><a href="module-core_base_components-TutorialScreen.html">TutorialScreen</a></li><li><a href="module-core_base_component-Component.html">Component</a></li><li><a href="module-core_base_data_widget-DataWidget.html">DataWidget</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html">ObservableWidget</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html">TunableWidget</a></li><li><a href="module-core_base_tuning_components-TuningPanel.html">TuningPanel</a></li><li><a href="module-core_base_view-View.html">View</a></li><li><a href="module-core_data_histogram_meta-HistogramMetadata.html">HistogramMetadata</a></li><li><a href="module-core_util_animator-Animator.html">Animator</a></li><li><a href="module-core_util_event_base-EventBase.html">EventBase</a></li><li><a href="module-core_util_math-CoreMath.html">CoreMath</a></li><li><a href="module-core_util_progress_aggregator-ProgressAggregator.html">ProgressAggregator</a></li><li><a href="module-liveq_BufferReader-BufferReader.html">BufferReader</a></li><li><a href="module-liveq_HistogramData-HistogramData.html">HistogramData</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html">LabProtocol</a></li><li><a href="module-liveq_LabSocket-LabSocket.html">LabSocket</a></li><li><a href="module-liveq_ReferenceData-ReferenceData.html">ReferenceData</a></li><li><a href="module-vas-basic_components_running_screen-LoginScreen.html">LoginScreen</a></li><li><a href="module-vas-basic_components_running_screen-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-BSODScreen.html">BSODScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-vas-basic_dataviz_histogram-PlotHistogram.html">PlotHistogram</a></li><li><a href="Sequencer.html">Sequencer</a></li></ul><h3>Events</h3><ul><li><a href="module-core_api_labsocket-APILabSocket.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runError">runError</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:completed">completed</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:runError">runError</a></li><li><a href="module-core_base_components-CinematicScreen.html#event:completed">completed</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openGame">openGame</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openURL">openURL</a></li><li><a href="module-core_base_components-HomeScreen.html#event:changeScreen">changeScreen</a></li><li><a href="module-core_base_components-HomeScreen.html#event:playLevel">playLevel</a></li><li><a href="module-core_base_components-LoginScreen.html#event:login">login</a></li><li><a href="module-core_base_components-RunningScreen.html#event:abortRun">abortRun</a></li><li><a href="module-core_base_components-TuningScreen.html#event:changeParameters">changeParameters</a></li><li><a href="module-core_base_components-TuningScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-TuningScreen.html#event:submitParameters">submitParameters</a></li><li><a href="module-core_base_data_widget-DataWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:blurVisualAid">blurVisualAid</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:completed">completed</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:focusVisualAid">focusVisualAid</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:dataArrived">dataArrived</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramAdded">histogramAdded</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramRemoved">histogramRemoved</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramsUpdated">histogramsUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramUpdated">histogramUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:metadataUpdated">metadataUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:ready">ready</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:connected">connected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:error">error</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:log">log</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runError">runError</a></li></ul><h3>Namespaces</h3><ul><li><a href="module-liveq_Calculate-Calculate.html">Calculate</a></li></ul><h3>Global</h3><ul><li><a href="global.html#chi2-bounds">chi2-bounds</a></li><li><a href="global.html#core">core</a></li><li><a href="global.html#css">css</a></li><li><a href="global.html#db">db</a></li><li><a href="global.html#dom-host">dom-host</a></li><li><a href="global.html#enforce_http">enforce_http</a></li><li><a href="global.html#forum_vas_api">forum_vas_api</a></li><li><a href="global.html#images_url">images_url</a></li><li><a href="global.html#liveq">liveq</a></li><li><a href="global.html#version">version</a></li><li><a href="global.html#voiceapi">voiceapi</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.3.0-beta1</a> on Wed Jul 29 2015 18:29:46 GMT+0200 (CEST)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

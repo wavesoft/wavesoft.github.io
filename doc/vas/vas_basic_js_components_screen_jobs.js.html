@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: vas/basic/js/components/screen_jobs.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: vas/basic/js/components/screen_jobs.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>
+define(
+
+	// Requirements
+	["jquery", "d3", "vas/core/ui", "vas/core/user", "vas/media", "vas/core/apisocket", "vas/config", "vas/core/registry", "vas/core/base/components"],
+
+	/**
+	 * Basic version of the jobs screen
+	 *
+	 * @exports basic/components/explain_screen
+	 */
+	function($, d3, UI, User, Media, APISocket, config, R,C) {
+
+		/**
+		 * @class
+		 * @classdesc The basic jobs screen
+		 */
+		var JobsScreen = function( hostDOM ) {
+			C.HomeScreen.call(this, hostDOM);
+
+			// Prepare propertis
+			this.activeJob = null;
+			this.labapi = false;
+			this.submitTunables = null;
+			this.submitObservables = null;
+			this.histogramLookup = {};
+			this.lastHistograms = null;
+			this.numConnectedMachines = 0;
+			this.lastEvents = 0;
+			this.lastEventsTime = 0;
+			this.rateRing = [];
+			this.listingTimer = 0;
+			this.maxEvents = 1000;
+			this.overlayComponent = null;
+
+			// Prepare host
+			hostDOM.addClass("jobs");
+
+			// Setup the registration form
+			$('&lt;h1>&lt;span class="highlight">Simulations&lt;/span> Dashboard&lt;/h1>').appendTo(hostDOM);
+			$('&lt;p>Here you can see your active simulation jobs.&lt;/p>').appendTo(hostDOM);
+
+			// Menu icons
+			var btnHost = $('&lt;div class="menu-icon">&lt;/div>').appendTo(hostDOM),
+				btnFeedback = $('&lt;div class="navbtn-large navbtn-upper navbtn-feedback">&lt;span class="glyphicon glyphicon-bullhorn">&lt;/span>&lt;div class="title title-top">Feedback&lt;/div>&lt;/div>').appendTo(btnHost),
+				btnLogout = $('&lt;div class="navbtn-large navbtn-upper navbtn-log-out">&lt;span class="glyphicon glyphicon-log-out">&lt;/span>&lt;div class="title">Logout&lt;/div>&lt;/div>'), //.appendTo(btnHost),
+				btnBackward = $('&lt;div class="navbtn-large navbtn-upper">&lt;span class="glyphicon glyphicon-menu-down icon-direction icon-direction-down">&lt;/span>&lt;span class="glyphicon glyphicon-wrench">&lt;/span>&lt;div class="title title-top">Tuning&lt;/div>&lt;/div>').appendTo(btnHost);
+
+			// Register click handlers
+			btnFeedback.click((function() {
+				this.trigger("feedback", {
+					"screen": "jobs"
+				});
+			}).bind(this));
+			btnLogout.click((function() {
+				this.trigger("logout");
+			}).bind(this));
+			btnBackward.click((function() {
+				this.trigger("hideJobs");
+			}).bind(this));
+
+			// ---------------------------------
+			// Create status sidescreen
+			// ---------------------------------
+			this.sideScreenDOM = $('&lt;div class="side-screen">&lt;/div>').appendTo(hostDOM);
+			this.bgSlice = $('&lt;div class="bg-slice">&lt;/div>').appendTo(this.sideScreenDOM);
+
+			// ---------------------------------
+			// Create the observable screen
+			// ---------------------------------
+			this.statusScreenDOM = $('&lt;div class="observable-short">&lt;/div>').appendTo(this.sideScreenDOM);
+			this.statusScreen = R.instanceComponent("screen.observable.short", this.statusScreenDOM);
+			this.forwardVisualEvents(this.statusScreen);
+
+			// ---------------------------------
+			// Prepare status fields and buttons
+			// ---------------------------------
+
+			// Setup inputs
+			this.statusMachines = $('&lt;div class="panel-shaded status-label p-machines">&lt;/div>').appendTo(this.sideScreenDOM);
+			$('&lt;div class="panel-label">Connected machines&lt;/div>').appendTo(this.statusMachines);
+			this.statusMachinesValue = $('&lt;div class="panel-value">0&lt;/div>').appendTo(this.statusMachines);
+
+			this.statusEvents = $('&lt;div class="panel-shaded status-label p-events">&lt;/div>').appendTo(this.sideScreenDOM);
+			$('&lt;div class="panel-label">Live event rate&lt;/div>').appendTo(this.statusEvents);
+			this.statusEventsValue = $('&lt;div class="panel-value">0&lt;/div>').appendTo(this.statusEvents);
+
+			this.statusProgress = $('&lt;div class="panel-shaded status-label p-progress">&lt;/div>').appendTo(this.sideScreenDOM);
+			$('&lt;div class="panel-label">Progress&lt;/div>').appendTo(this.statusProgress);
+			this.statusProgressValue = $('&lt;div class="panel-value">0 %&lt;/div>').appendTo(this.statusProgress);
+
+			// Panel abort and view buttons
+			this.btnHelp = $('&lt;button class="p-help btn-help btn-shaded btn-teal btn-with-icon">&lt;span class="glyphicon glyphicon-bookmark">&lt;/span>&lt;br />Help&lt;/button>').appendTo(this.sideScreenDOM);
+			this.btnAbort = $('&lt;button class="p-abort btn-shaded btn-red btn-striped btn-with-icon">&lt;span class="glyphicon glyphicon-remove-circle">&lt;/span>&lt;br />Abort&lt;/button>').appendTo(this.sideScreenDOM);
+			this.btnView = $('&lt;button class="p-view btn-shaded btn-darkblue btn-with-icon">&lt;span class="glyphicon glyphicon-dashboard">&lt;/span>&lt;br />View&lt;/button>').appendTo(this.sideScreenDOM);
+
+			// Register visual aids
+			R.registerVisualAid("jobs.button.abort", this.btnAbort, { "screen": "screen.jobs" });
+			R.registerVisualAid("jobs.button.view", this.btnView, { "screen": "screen.jobs" });
+
+			// Disable by default
+			this.btnAbort.addClass("disabled");
+			this.btnView.addClass("disabled");
+
+			// Bind callbacks
+			this.btnAbort.click((function() {
+				if (this.labapi) {
+					this.labapi.abortJob( this.activeJob );
+					this.resetInterface();
+				}
+			}).bind(this));
+			this.btnView.click((function() {
+				if (this.lastHistograms) {
+					// Show histograms overlay
+					UI.showOverlay("overlay.histograms", (function(com) {
+						// Define overlay component
+						this.overlayComponent = com;
+						// Update histograms
+						this.overlayComponent.onHistogramsDefined( this.lastHistograms );
+					}).bind(this));
+				}
+			}).bind(this));
+			this.btnHelp.click((function() {
+				//this.descFrame.toggleClass("visible");
+				UI.showHelpOverlay( Media.image("help/03-simulation.png") )
+			}).bind(this));
+
+			// ---------------------------------
+			// Prepare jobs list
+			// ---------------------------------
+
+			// Prepare list
+			this.eListHost = $('&lt;div class="table-list table-absolute table-scroll table-lg">&lt;/div>').appendTo(hostDOM);
+			this.eListTable = $('&lt;table>&lt;/table>').appendTo(this.eListHost);
+			this.eListHeader = $('&lt;thead>&lt;tr>&lt;th class="col-3 text-center">Job&lt;/th>&lt;th class="col-4 text-center">Status&lt;/th>&lt;th class="col-3 text-center">Events&lt;/th>&lt;th class="col-2 text-center">View&lt;/th>&lt;/tr>&lt;/thead>').appendTo(this.eListTable);
+			this.eListBody = $('&lt;tbody>&lt;/tbody>').appendTo(this.eListTable);
+
+			// Prepare the progress status label
+			this.eStatusLabel = $('&lt;div class="panel-shaded p-run-status">---&lt;/div>').appendTo(hostDOM);
+
+			// ---------------------------------
+			// Jobs list
+			// ---------------------------------
+
+			// List
+			this.listJobs = $('&lt;div class="list-jobs">&lt;/div>').appendTo(this.hostDOM);
+			R.registerVisualAid("jobs.list.jobs", this.listJobs, { "screen": "screen.jobs" });
+
+		}
+		JobsScreen.prototype = Object.create( C.HomeScreen.prototype );
+
+		/**
+		 * Add a job in the status screen
+		 */
+		JobsScreen.prototype.addJob = function( job ) {
+
+			// Translate status
+			var jobStatus = ['Queued', 'Running', 'Completed', 'Failed', 'Cancelled', 'Stalled'];
+
+			var row = $('&lt;tr class="joblist-id-'+job['id']+'">&lt;/tr>'),
+				c1 = $('&lt;td class="col-3 text-center">&lt;span class="glyphicon glyphicon-edit">&lt;/span> Job #' + job['id'] + '&lt;/td>').appendTo(row),
+				c2 = $('&lt;td class="col-4 text-center">' + jobStatus[job['status']] + '&lt;/td>').appendTo(row),
+				c2 = $('&lt;td class="col-3 text-center">' + job['events'] + '&lt;/td>').appendTo(row),
+				c3 = $('&lt;td class="col-2 text-center">&lt;/td>').appendTo(row)
+				b1 = $('&lt;button class="btn-shaded btn-yellow">&lt;span class="glyphicon glyphicon-eye-open">&lt;/span>&lt;/button>').appendTo(c3);
+
+			// Check if selected
+			if (job['id'] == this.activeJob) {
+
+				// Select row
+				row.addClass("selected");
+
+				// Change status label of the focused job
+				var jobStatus = ['QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED', 'STALLED'];
+				this.eStatusLabel.text( jobStatus[job['status']] );
+
+			}
+
+			// Select on click
+			row.click((function(job) {
+				return function() {
+					// Skip if active is already selected
+					if (this.activeJob == job['id']) return;
+					// Select clicked element
+					this.eListBody.children("tr").removeClass("selected");
+					row.addClass("selected");
+					// Focus job activity on that job
+					this.interfaceBind( job['id'] );
+				}
+			})(job).bind(this));
+
+			// Handle click
+			b1.click((function(job) {
+				return function(e) {
+					// Cancel event
+					e.stopPropagation();
+					e.preventDefault();
+					// Show job details
+					this.labapi.getJobDetails(job['id'], (function(details) {
+
+						// Show job details overlay
+						UI.showOverlay("overlay.jobstatus", (function(com) {
+							com.onJobDetailsUpdated( details );
+						}).bind(this));
+
+					}).bind(this));
+				}
+			})(job).bind(this));
+
+			// Populate fields
+			this.eListBody.append(row);
+		}
+
+		/**
+		 * Remove a job from the status screen
+		 */
+		JobsScreen.prototype.removeJob = function( job ) {
+			this.eListBody.find('tr.joblist-id-'+job['id']).remove();
+		}
+
+		/**
+		 * Apply job details
+		 */
+		JobsScreen.prototype.applyJobDetails = function( job, agents ) {
+
+			// Select
+			this.activeJob = job['id'];
+
+			// Update maximum number of events
+			this.maxEvents = job['maxEvents'];
+
+			// Focus to given job item on the list
+			this.eListBody.children("tr").removeClass("selected");
+			this.eListBody.find('tr.joblist-id-'+job['id']).addClass("selected");
+
+			// Change status label of the focused job
+			var jobStatus = ['QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED', 'STALLED'];
+			this.eStatusLabel.text( jobStatus[job['status']] );
+
+			// Start globe spinning if status is running
+			this.statusScreen.globe.setPaused( !(job['status'] == 1)  );
+			if ((job['status'] &lt; 2) || (job['status'] == 5)) this.btnAbort.removeClass("disabled");
+
+			// Parse agents
+			for (var i=0; i&lt;agents.length; i++) {
+				var a = agents[i];
+
+				// Parse lat/lng if exist, otherwise use random
+				var lat = String(Math.random() * 180 - 90),
+					lng = String(Math.random() * 180);
+
+				// Update lat/lng
+				if (a['latlng'] != undefined) {
+					var parts = a['latlng'].split(",");
+					lat = Number(parts[0]);
+					lng = Number(parts[1]);
+				}
+
+				// Update interface
+				this.statusScreen.onWorkerAdded( a['uuid'], {'lat' : lat, 'lng' : lng} );
+				this.numConnectedMachines++;
+				this.statusMachinesValue.text(this.numConnectedMachines);
+
+			}
+
+		}
+
+		/**
+		 * Unbind interface from a job feedback
+		 */
+		JobsScreen.prototype.resetInterface = function() {
+
+			// Disable buttons
+			this.btnView.addClass("disabled");
+			this.btnAbort.addClass("disabled");
+
+			// Reset status screen
+			this.statusScreen.onObservablesReset();
+
+			// Reset status messages
+			this.eStatusLabel.text("---");
+			this.statusMachinesValue.text("0");
+			this.statusEventsValue.text("in a sec");
+			this.statusProgressValue.text("0 %");
+
+			// Reset properties
+			this.numConnectedMachines = 0;
+			this.lastEventsTime = 0;
+			this.lastEvents = 0;
+			this.rateRing = [];
+			this.activeJob = null;
+			this.overlayComponent = null;
+
+		}
+
+		/**
+		 * Bind interface to a particular job
+		 */
+		JobsScreen.prototype.interfaceBind = function( job ) {
+
+			// Focus on the given job
+			this.resetInterface();
+			this.labapi.selectJob( job );
+
+			// Focus to job
+			this.activeJob = job;
+
+		}
+
+		/**
+		 * Refresh the job listing
+		 */
+		JobsScreen.prototype.refreshJobListing = function() {
+			this.eListBody.empty();
+			this.labapi.enumJobs();
+		}
+
+		/**
+		 * Add a job in the status screen
+		 */
+		JobsScreen.prototype.onSubmitRequest = function( tunables, observables ) {
+			this.submitTunables = tunables;
+			this.submitObservables = observables;
+		}
+
+		/**
+		 * Resize window
+		 */
+		JobsScreen.prototype.onResize = function( width, height ) {
+			this.width = width;
+			this.height = height;
+
+			// Calculate inner radius size
+			var inPad = 45,
+				inW = this.width * 0.6,
+				inH = this.height - inPad*2;
+
+			// Resize status screen
+			this.statusScreen.onMove( 0, inPad + 40 );
+			this.statusScreen.onResize( inW, inH );
+
+			// Resize background graphics
+			var sz = Math.max(inW, inH) - 100;
+			this.bgSlice.css({
+				'height': 2*sz,
+				'width': 2*sz,
+				'left': width*0.6 - sz*2,
+				'top': this.height/2 - sz,
+				// Border-radius
+				'borderRadius': sz,
+				'mozBorderRadius': sz,
+				'webkitBorderRadius': sz,
+				'mzBorderRadius': sz
+			});
+
+
+		}
+
+		/**
+		 * Abort simulatio on unload
+		 */
+		JobsScreen.prototype.onWillHide = function(cb) {
+
+			// Disconnect from LabAPI
+			if (this.labapi) {
+				this.resetInterface();
+				this.labapi.deselectJob();
+			}
+
+			// Clear listing timer
+			clearInterval( this.listingTimer );
+			this.listingTimer = 0;
+
+			// Fire callback
+			cb();
+
+		}
+
+		/**
+		 * Initialize lab on load
+		 */
+		JobsScreen.prototype.onWillShow = function(cb) {
+
+			// Reset observables
+			this.statusScreen.onObservablesReset();
+
+			// Open labsocket for I/O and database for resolving
+			var DB = APISocket.openDb();
+			this.labapi = APISocket.openLabsocket();
+
+			// Register callbacks
+			this.labapi.on('error', (function(message, critical) {
+				UI.logError( message, critical );
+			}).bind(this));
+			this.labapi.on('histogramUpdated', (function(data, ref) {
+				this.statusScreen.onObservableUpdated(data, ref);
+			}).bind(this));
+			this.labapi.on('histogramsAdded', (function(histos) {
+
+				// Collect names and map histogram ID to object
+				var histoNames = [],
+					histoMap = {};
+				for (var i=0; i&lt;histos.length; i++) {
+					histoNames.push(histos[i].id);
+					histoMap[histos[i].id] = histos[i];
+				}
+
+				// Query db for observable details
+				DB.getMultipleRecords("observable", histoNames, (function(docs) {
+
+					// Handle response
+					for (var i=0; i&lt;docs.length; i++) {
+						var obs = docs[i],
+							hist = histoMap[obs['name']];
+
+						// Fire respective observable
+						this.statusScreen.onObservableAdded(hist.data, hist.ref, obs);
+
+					}
+
+				}).bind(this));
+
+			}).bind(this));
+			this.labapi.on('histogramsUpdated', (function(histos) {
+				this.lastHistograms = histos;
+				this.btnView.removeClass("disabled");
+				//this.eStatusLabel.text("RUNNING");
+
+				// Update overlay component
+				if (this.overlayComponent) {
+					this.overlayComponent.onHistogramsDefined( histos );
+				}
+
+			}).bind(this));
+			this.labapi.on('metadataUpdated', (function(meta) {
+				var currNevts = parseInt(meta['nevts']),
+					progValue = currNevts * 100 / this.maxEvents;
+				this.statusProgressValue.text( Math.round(progValue) + " %" );
+
+				// Calculate rate
+				var currTime = Date.now();
+				if (this.lastEventsTime) {
+					var deltaEvts = currNevts - this.lastEvents,
+						deltaTime = currTime - this.lastEventsTime,
+						rate = deltaEvts * 1000 / deltaTime,
+						avgRate = 0;
+
+					// Average with ring buffer
+					this.rateRing.push(rate);
+					if (this.rateRing.length > 10) this.rateRing.shift();
+					for (var i=0; i&lt;this.rateRing.length; i++) 
+						avgRate += this.rateRing[i];
+					avgRate /= this.rateRing.length;
+
+					// Update average event rate
+					this.statusEventsValue.text( Math.round(avgRate) + " /s" );
+				}
+				this.lastEventsTime = currTime;
+				this.lastEvents = currNevts;
+
+			}).bind(this));
+
+			// Show/Hide workers based on telem
+			this.labapi.on('log', (function(logLine, telemetryData) {
+				if (telemetryData['agent_added']) {
+					// Parse lat/lng if exist, otherwise use random
+					var lat = String(Math.random() * 180 - 90),
+						lng = String(Math.random() * 180);
+					// Update lat/lng
+					if (telemetryData['agent_added_latlng'] != undefined) {
+						var parts = telemetryData['agent_added_latlng'].split(",");
+						lat = Number(parts[0]);
+						lng = Number(parts[1]);
+					}
+					// Notify the fact that agent was connected
+					this.statusScreen.onWorkerAdded(
+							telemetryData['agent_added'],
+							{'lat' : lat, 'lng' : lng}
+						);
+					this.numConnectedMachines++;
+					this.statusMachinesValue.text(this.numConnectedMachines);
+
+				} else if (telemetryData['agent_removed']) {
+					this.statusScreen.onWorkerRemoved(telemetryData['agent_removed']);
+					this.numConnectedMachines--;
+					this.statusMachinesValue.text(this.numConnectedMachines);
+
+				}
+			}).bind(this));
+
+			// Reset interface when current job is deselected
+			this.labapi.on('jobDeselected', (function() {
+				this.resetInterface();
+			}).bind(this));
+
+			// Handle job listings
+			this.labapi.on('jobAdded', (function(job) {
+				this.addJob(job);
+			}).bind(this));
+			this.labapi.on('jobRemoved', (function(job) {
+				this.removeJob(job);
+			}).bind(this));
+
+			// When job is completed, reset interface
+			this.labapi.on('runCompleted', (function() {
+				this.resetInterface();
+			}).bind(this));
+
+			// When job details arrive focus
+			this.labapi.on('jobDetails', (function(job, agents) {
+
+				// Apply job details
+				this.applyJobDetails(job, agents);
+
+			}).bind(this));
+
+			// Check if we should start a job
+			if (this.submitTunables) {
+
+				// Validate jobs
+				this.labapi.verifyJob( this.submitTunables, this.submitObservables, (function(status) {
+
+					// Helper to submit the job
+					var do_submit = (function() {
+
+						// Submit job
+						this.labapi.submitJob( this.submitTunables, this.submitObservables );
+
+						// Reset
+						this.submitTunables = null;
+						this.submitObservables = null;
+
+						// Check if user has not seen the intro tutorial, show it now
+						if (!User.isFirstTimeSeen("running.intro")) {
+							// Display the intro help screen
+							UI.showHelpOverlay( Media.image("help/03-simulation.png"), function() {
+								// Mark introduction sequence as shown
+								User.markFirstTimeAsSeen("running.intro");
+							});
+						}
+
+					}).bind(this);
+
+					// We are good, submit it now!
+					if (status == "ok") {
+						do_submit();
+					} else if (status == "conflict") {
+
+						// Warn
+						UI.scheduleFlashPrompt(
+							"Multiple submission", 
+							"You are already running a validation. This will overwrite your previous request!", 
+							[
+								{ 
+									"label"    : "Continue",
+									"class"    : "btn-red",
+								  	"callback" : function(){
+								  		// Confirm
+								  		do_submit();
+									}
+								},
+								{
+									"label"    : "Cancel",
+									"class"    : "btn-darkblue",
+									"callback" : function(){
+									}
+								}
+							],
+							"flash-icons/alert.png"
+						);
+
+
+					}
+
+				}).bind(this));
+
+			}
+
+			// Refresh job listing AFTER job submission
+			this.refreshJobListing();
+
+			// And scheduler update listing every 5 seconds
+			this.listingTimer = setInterval(function() {
+				this.refreshJobListing();
+			}.bind(this), 5000);
+
+			// Show interface
+			cb();
+
+		}
+
+		// Register jobs screen
+		R.registerComponent( "screen.jobs", JobsScreen, 1 );
+
+	}
+
+);
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Modules</h3><ul><li><a href="module-base_components_tuning_observable.html">base/components/tuning/observable</a></li><li><a href="module-base_components_tuning_tunable.html">base/components/tuning/tunable</a></li><li><a href="module-base_components_tuning_tuning_panel.html">base/components/tuning/tuning_panel</a></li><li><a href="module-basic_components_backdrop_explain.html">basic/components/backdrop_explain</a></li><li><a href="module-basic_components_backdrop_globe.html">basic/components/backdrop_globe</a></li><li><a href="module-basic_components_backdrop_home.html">basic/components/backdrop_home</a></li><li><a href="module-basic_components_backdrop_login.html">basic/components/backdrop_login</a></li><li><a href="module-basic_components_backdrop_machine.html">basic/components/backdrop_machine</a></li><li><a href="module-basic_components_backdrop_tuning.html">basic/components/backdrop_tuning</a></li><li><a href="module-basic_components_explain_book.html">basic/components/explain/book</a></li><li><a href="module-basic_components_explain_physics.html">basic/components/explain_physics</a></li><li><a href="module-basic_components_explain_screen.html">basic/components/explain_screen</a></li><li><a href="module-basic_components_nav_mini.html">basic/components/nav_mini</a></li><li><a href="module-basic_components_screem_courseroom.html">basic/components/screem_courseroom</a></li><li><a href="module-basic_components_screem_menu.html">basic/components/screem_menu</a></li><li><a href="module-basic_components_screem_team.html">basic/components/screem_team</a></li><li><a href="module-basic_components_screen_introgame.html">basic/components/screen_introgame</a></li><li><a href="module-basic_components_tvhead_agent.html">basic/components/tvhead_agent</a></li><li><a href="module-core_api_account.html">core/api/account</a></li><li><a href="module-core_api_chatroom.html">core/api/chatroom</a></li><li><a href="module-core_api_course.html">core/api/course</a></li><li><a href="module-core_api_interface.html">core/api/interface</a></li><li><a href="module-core_api_labsocket.html">core/api/labsocket</a></li><li><a href="module-core_api_labtrain.html">core/api/labtrain</a></li><li><a href="module-core_api_team.html">core/api/team</a></li><li><a href="module-core_apisocket.html">core/apisocket</a></li><li><a href="module-core_base_agent.html">core/base/agent</a></li><li><a href="module-core_base_component.html">core/base/component</a></li><li><a href="module-core_base_components.html">core/base/components</a></li><li><a href="module-core_base_data_widget.html">core/base/data_widget</a></li><li><a href="module-core_base_tuning_components.html">core/base/tuning_components</a></li><li><a href="module-core_base_view.html">core/base/view</a></li><li><a href="module-core_data_histogram_meta.html">core/data/histogram_meta</a></li><li><a href="module-core_db.html">core/db</a></li><li><a href="module-core_developer.html">core/developer</a></li><li><a href="module-core_feedback.html">core/feedback</a></li><li><a href="module-core_global.html">core/global</a></li><li><a href="module-core_modules_easing.html">core/modules/easing</a></li><li><a href="module-core_registry.html">core/registry</a></li><li><a href="module-core_ui.html">core/ui</a></li><li><a href="module-core_user.html">core/user</a></li><li><a href="module-core_util_animator.html">core/util/animator</a></li><li><a href="module-core_util_event_base.html">core/util/event_base</a></li><li><a href="module-core_util_math.html">core/util/math</a></li><li><a href="module-core_util_progress_aggregator.html">core/util/progress_aggregator</a></li><li><a href="module-liveq_BufferReader.html">liveq/BufferReader</a></li><li><a href="module-liveq_Calculate.html">liveq/Calculate</a></li><li><a href="module-liveq_HistogramData.html">liveq/HistogramData</a></li><li><a href="module-liveq_LabProtocol.html">liveq/LabProtocol</a></li><li><a href="module-liveq_LabSocket.html">liveq/LabSocket</a></li><li><a href="module-liveq_main.html">liveq/main</a></li><li><a href="module-liveq_ReferenceData.html">liveq/ReferenceData</a></li><li><a href="module-vas-basic_components_onscreen.html">vas-basic/components/onscreen</a></li><li><a href="module-vas-basic_components_running_screen.html">vas-basic/components/running_screen</a></li><li><a href="module-vas-basic_components_screen_bsod.html">vas-basic/components/screen_bsod</a></li><li><a href="module-vas-basic_components_tuning_screen.html">vas-basic/components/tuning_screen</a></li><li><a href="module-vas-basic_data_trainhisto.html">vas-basic/data/trainhisto</a></li><li><a href="module-vas-basic_dataviz_histogram.html">vas-basic/dataviz/histogram</a></li><li><a href="module-vas-basic_dataviz_histogram_full.html">vas-basic/dataviz/histogram_full</a></li><li><a href="module-vas-basic_dataviz_observable.html">vas-basic/dataviz/observable</a></li><li><a href="module-vas-basic_infoblock_knowledge.html">vas-basic/infoblock/knowledge</a></li><li><a href="module-vas-basic_infoblock_observable.html">vas-basic/infoblock/observable</a></li><li><a href="module-vas-basic_infoblock_tunable.html">vas-basic/infoblock/tunable</a></li><li><a href="module-vas-basic_machineparts_describe.html">vas-basic/machineparts/describe</a></li><li><a href="module-vas-basic_machineparts_paper.html">vas-basic/machineparts/paper</a></li><li><a href="module-vas-basic_machineparts_results.html">vas-basic/machineparts/results</a></li><li><a href="module-vas-basic_overlay_buy.html">vas-basic/overlay/buy</a></li><li><a href="module-vas-basic_overlay_feedback.html">vas-basic/overlay/feedback</a></li><li><a href="module-vas-basic_overlay_flash.html">vas-basic/overlay/flash</a></li><li><a href="module-vas-basic_overlay_jobstatus.html">vas-basic/overlay/jobstatus</a></li><li><a href="module-vas-basic_overlay_publicpapers.html">vas-basic/overlay/publicpapers</a></li><li><a href="module-vas-basic_overlay_SwitchTeam.html">vas-basic/overlay/SwitchTeam</a></li><li><a href="module-vas-basic_overlays_help.html">vas-basic/overlays/help</a></li><li><a href="module-vas-basic_profileparts_achievements.html">vas-basic/profileparts/achievements</a></li><li><a href="module-vas-basic_profileparts_books.html">vas-basic/profileparts/books</a></li><li><a href="module-vas-basic_profileparts_papers.html">vas-basic/profileparts/papers</a></li><li><a href="module-vas-basic_profileparts_team.html">vas-basic/profileparts/team</a></li><li><a href="module-vas-basic_profileparts_user.html">vas-basic/profileparts/user</a></li></ul><h3>Classes</h3><ul><li><a href="LiveQ.HistogramData.html">HistogramData</a></li><li><a href="module-basic_components_backdrop_explain-ExplainBackdrop.html">ExplainBackdrop</a></li><li><a href="module-basic_components_backdrop_globe-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-basic_components_backdrop_home-HomeBackdrop.html">HomeBackdrop</a></li><li><a href="module-basic_components_backdrop_home-PaswordReset.html">PaswordReset</a></li><li><a href="module-basic_components_backdrop_login-LoginBackdrop.html">LoginBackdrop</a></li><li><a href="module-basic_components_backdrop_machine-MachineBackdrop.html">MachineBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ProgressBackdrop.html">ProgressBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ResultsBackdrop.html">ResultsBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-TuningBackdrop.html">TuningBackdrop</a></li><li><a href="module-basic_components_explain_book-ExplainBook.html">ExplainBook</a></li><li><a href="module-basic_components_explain_physics-ExplainBlackboard.html">ExplainBlackboard</a></li><li><a href="module-basic_components_explain_physics-ExplainPhysics.html">ExplainPhysics</a></li><li><a href="module-basic_components_explain_screen-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-basic_components_explain_screen-HomeScreen.html">HomeScreen</a></li><li><a href="module-basic_components_explain_screen-JobsScreen.html">JobsScreen</a></li><li><a href="module-basic_components_explain_screen-KnowledgeScreen.html">KnowledgeScreen</a></li><li><a href="module-basic_components_explain_screen-StatsTutorial.html">StatsTutorial</a></li><li><a href="module-basic_components_explain_screen-TuningScreen.html">TuningScreen</a></li><li><a href="module-basic_components_nav_mini-NavMini.html">NavMini</a></li><li><a href="module-basic_components_screem_courseroom-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-basic_components_screem_menu-MenuScreen.html">MenuScreen</a></li><li><a href="module-basic_components_screem_team-TeamScreen.html">TeamScreen</a></li><li><a href="module-basic_components_screen_introgame-IntroGameScreen.html">IntroGameScreen</a></li><li><a href="module-basic_components_tvhead_agent-TVhead.html">TVhead</a></li><li><a href="module-core_base_agent-VisualAgent.html">VisualAgent</a></li><li><a href="module-core_base_components-Backdrop.html">Backdrop</a></li><li><a href="module-core_base_components-BookScreen.html">BookScreen</a></li><li><a href="module-core_base_components-BSODScreen.html">BSODScreen</a></li><li><a href="module-core_base_components-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-core_base_components-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-core_base_components-ExplainScreen.html">ExplainScreen</a></li><li><a href="module-core_base_components-HomeScreen.html">HomeScreen</a></li><li><a href="module-core_base_components-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-core_base_components-LoginScreen.html">LoginScreen</a></li><li><a href="module-core_base_components-Nav.html">Nav</a></li><li><a href="module-core_base_components-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-core_base_components-PasswordResetScreen.html">PasswordResetScreen</a></li><li><a href="module-core_base_components-Popup.html">Popup</a></li><li><a href="module-core_base_components-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-core_base_components-QuestionaireScreen.html">QuestionaireScreen</a></li><li><a href="module-core_base_components-RegisterScreen.html">RegisterScreen</a></li><li><a href="module-core_base_components-ResultsScreen.html">ResultsScreen</a></li><li><a href="module-core_base_components-RunningScreen.html">RunningScreen</a></li><li><a href="module-core_base_components-TeamScreen.html">TeamScreen</a></li><li><a href="module-core_base_components-TuningScreen.html">TuningScreen</a></li><li><a href="module-core_base_components-TutorialScreen.html">TutorialScreen</a></li><li><a href="module-core_base_component-Component.html">Component</a></li><li><a href="module-core_base_data_widget-DataWidget.html">DataWidget</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html">ObservableWidget</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html">TunableWidget</a></li><li><a href="module-core_base_tuning_components-TuningPanel.html">TuningPanel</a></li><li><a href="module-core_base_view-View.html">View</a></li><li><a href="module-core_data_histogram_meta-HistogramMetadata.html">HistogramMetadata</a></li><li><a href="module-core_util_animator-Animator.html">Animator</a></li><li><a href="module-core_util_event_base-EventBase.html">EventBase</a></li><li><a href="module-core_util_math-CoreMath.html">CoreMath</a></li><li><a href="module-core_util_progress_aggregator-ProgressAggregator.html">ProgressAggregator</a></li><li><a href="module-liveq_BufferReader-BufferReader.html">BufferReader</a></li><li><a href="module-liveq_HistogramData-HistogramData.html">HistogramData</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html">LabProtocol</a></li><li><a href="module-liveq_LabSocket-LabSocket.html">LabSocket</a></li><li><a href="module-liveq_ReferenceData-ReferenceData.html">ReferenceData</a></li><li><a href="module-vas-basic_components_running_screen-LoginScreen.html">LoginScreen</a></li><li><a href="module-vas-basic_components_running_screen-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-BSODScreen.html">BSODScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-vas-basic_dataviz_histogram-PlotHistogram.html">PlotHistogram</a></li><li><a href="Sequencer.html">Sequencer</a></li></ul><h3>Events</h3><ul><li><a href="module-core_api_labsocket-APILabSocket.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runError">runError</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:completed">completed</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:runError">runError</a></li><li><a href="module-core_base_components-CinematicScreen.html#event:completed">completed</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openGame">openGame</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openURL">openURL</a></li><li><a href="module-core_base_components-HomeScreen.html#event:changeScreen">changeScreen</a></li><li><a href="module-core_base_components-HomeScreen.html#event:playLevel">playLevel</a></li><li><a href="module-core_base_components-LoginScreen.html#event:login">login</a></li><li><a href="module-core_base_components-RunningScreen.html#event:abortRun">abortRun</a></li><li><a href="module-core_base_components-TuningScreen.html#event:changeParameters">changeParameters</a></li><li><a href="module-core_base_components-TuningScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-TuningScreen.html#event:submitParameters">submitParameters</a></li><li><a href="module-core_base_data_widget-DataWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:blurVisualAid">blurVisualAid</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:completed">completed</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:focusVisualAid">focusVisualAid</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:dataArrived">dataArrived</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramAdded">histogramAdded</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramRemoved">histogramRemoved</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramsUpdated">histogramsUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramUpdated">histogramUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:metadataUpdated">metadataUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:ready">ready</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:connected">connected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:error">error</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:log">log</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runError">runError</a></li></ul><h3>Namespaces</h3><ul><li><a href="module-liveq_Calculate-Calculate.html">Calculate</a></li></ul><h3>Global</h3><ul><li><a href="global.html#chi2-bounds">chi2-bounds</a></li><li><a href="global.html#core">core</a></li><li><a href="global.html#css">css</a></li><li><a href="global.html#db">db</a></li><li><a href="global.html#dom-host">dom-host</a></li><li><a href="global.html#enforce_http">enforce_http</a></li><li><a href="global.html#forum_vas_api">forum_vas_api</a></li><li><a href="global.html#images_url">images_url</a></li><li><a href="global.html#liveq">liveq</a></li><li><a href="global.html#version">version</a></li><li><a href="global.html#voiceapi">voiceapi</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.3.0-beta1</a> on Wed Jul 29 2015 18:29:46 GMT+0200 (CEST)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

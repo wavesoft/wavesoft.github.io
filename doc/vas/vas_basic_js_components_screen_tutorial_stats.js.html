@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: vas/basic/js/components/screen_tutorial_stats.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: vas/basic/js/components/screen_tutorial_stats.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>
+
+define(
+
+	// Requirements
+	["jquery", "vas/core/registry", "vas/core/base/components", "vas/core/db", "vas/core/ui", "vas/core/liveq/Calculate", "vas/core/apisocket" ],
+
+	/**
+	 * Basic version of the introduction to tutorial screen
+	 *
+	 * @exports basic/components/explain_screen
+	 */
+	function($, R, C, DB, UI, Calculate, APISocket) {
+		
+		/**
+		 * Helper function to format thousands
+		 */
+		function numberWithCommas(x) {
+		    return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+		}
+
+		/**
+		 * Helper class for managing multiple histograms
+		 */
+		var HistogramsGroup = function( hostDOM, eventsLabel, progressBar, progressLabel, chi2Label ) {
+			this.hostDOM = hostDOM;
+			this.eventsLabel = eventsLabel;
+			this.progressBar = progressBar;
+			this.progressLabel = progressLabel;
+			this.chi2Label = chi2Label;
+
+			this.width = 0;
+			this.height = 0;
+			this.rows = 0;
+			this.cols = 0;
+			this.maxEvents = 800000;
+
+			// Flags
+			this.flagErrorBars = false;
+			this.flagErrorColors = false;
+
+			// Histogram resizing information
+			this.histograms = [];
+
+			// Callback to be fired when we reached 100%
+			this.onMaxedOut = function() { };
+
+			// Hide error bars
+			this.showErrorBars(false);
+			this.showErrorColors(false);
+			this.vibrationWidth = 0;
+
+		}
+
+		/**
+		 * Resize histograms
+		 */
+		HistogramsGroup.prototype.resizeHistograms = function() {
+			var pad = 20, x=0, y=0,
+				elmW = (this.width - 2 * this.cols * pad) / this.cols,
+				elmH = (this.height - 2 * this.rows * pad) / this.rows;
+
+			for (var i=0; i&lt;this.histograms.length; i++) {
+				var h = this.histograms[i],
+					pX = pad * (x+1) + elmW * x,
+					pY = pad * (y+1) + elmH * y;
+
+				// Reposition element
+				h.dom.css({
+					'left': pX,
+					'top': pY,
+					'width': elmW,
+					'height': elmH
+				});
+
+				// Resize object
+				h.inst.onResize( elmW, elmH );
+
+				// Forward
+				if (++x >= this.cols) {
+					x=0; y++;
+				}
+			}
+		}
+
+
+		/**
+		 * Show/hide error bars
+		 */
+		HistogramsGroup.prototype.addHistogram = function( histoData, histoRef ) {
+
+			// Store histogram
+			var domHisto = $('&lt;div>&lt;/div>').appendTo(this.hostDOM),
+				hist = R.instanceComponent("dataviz.histogram_full", domHisto);
+
+			// Store on histograms
+			hist.onUpdate({ 'data': histoData, 'ref': histoRef })
+			this.histograms.push({ 'inst': hist, 'dom': domHisto, 'data': histoData, 'ref': histoRef });
+
+			// Realign histograms
+			var len = this.histograms.length;
+			this.cols = parseInt(Math.ceil(Math.sqrt(len))),
+			this.rows = parseInt(Math.ceil(len / this.cols));
+
+			// Resize histograms
+			this.resizeHistograms();
+			this.applyFlags();
+
+		}
+
+		/**
+		 * Show/hide error bars
+		 */
+		HistogramsGroup.prototype.clearHistograms = function() {
+			this.hostDOM.empty();
+			this.histograms = [];
+		}
+
+		/**
+		 * Apply flags to the histograms
+		 */
+		HistogramsGroup.prototype.applyFlags = function() {
+			for (var i=0; i&lt;this.histograms.length; i++) {
+				var h = this.histograms[i];
+				h.inst.onMetaUpdate({
+					'errorBars': this.flagErrorBars,
+					'errorColors': this.flagErrorColors
+				});
+			}			
+		}
+
+		/**
+		 * Show/hide error bars
+		 */
+		HistogramsGroup.prototype.showErrorBars = function( visible ) {
+			this.flagErrorBars = visible;
+			this.applyFlags();
+		}
+
+		/**
+		 * Show/hide error bars
+		 */
+		HistogramsGroup.prototype.showErrorColors = function( visible ) {
+			this.flagErrorColors = visible;
+			this.applyFlags();
+		}
+
+		/**
+		 * Update all histograms
+		 */
+		HistogramsGroup.prototype.updateHistograms = function( allHistograms ) {
+			for (var i=0; i&lt;allHistograms.length; i++) {
+				var h = this.histograms[i];
+				h.inst.onMetaUpdate(allHistograms[i]);
+				h.data = allHistograms[i].data;
+				h.ref = allHistograms[i].ref;
+			}
+		}
+
+		/**
+		 * Handle metadata update
+		 */
+		HistogramsGroup.prototype.handleMedatada = function( metadata ) {
+			var progress = metadata['nevts'] / this.maxEvents;
+			this.eventsLabel.text(numberWithCommas( metadata['nevts'] ));
+
+			// Calculate machine load by the progress
+			var load = progress / 2 + 0.5;
+
+			// Update vibration width
+			if (load > 0.8) {
+				this.vibrationWidth = 20 * ((load - 0.8) / 0.2);
+			} else {
+				this.vibrationWidth = 0;
+			}
+
+			// Update progress
+			load += 0.005 - Math.random() * 0.01;
+			var percent = load * 100;
+			this.progressBar.css({
+				'width': percent + '%'
+			});
+			this.progressLabel.html("Machine Load: &lt;strong>" + Math.round(percent).toFixed(0) + "%&lt;/strong>");
+
+		}
+
+		/**
+		 * Handle metadata update
+		 */
+		HistogramsGroup.prototype.handleCompleted = function() {
+			// We have maxed out!
+			if (this.onMaxedOut) this.onMaxedOut();
+		}
+
+		/**
+		 * Resize histograms on demand
+		 */
+		HistogramsGroup.prototype.resize = function(w,h) {
+			this.width = w;
+			this.height = h;
+			this.resizeHistograms();
+		}
+
+		/**
+		 * Re-roll, by creating a new sample set
+		 */
+		HistogramsGroup.prototype.initialize = function(config) {
+
+			// Reset previous
+			this.clearHistograms();
+
+			// Open new training socket
+			this.api = APISocket.openLabtrain(
+				config.sequence || "good", 
+				config.observables || [ 
+					"/ALEPH_2004_S5765862/d54-x01-y01"
+				]);
+
+			// Handle API actions
+			this.api.on('histogramAdded', this.addHistogram.bind(this));
+			this.api.on('histogramsUpdated', this.updateHistograms.bind(this));
+			this.api.on('metadataUpdated', this.handleMedatada.bind(this));
+			this.api.on('completed', this.handleCompleted.bind(this));
+
+		}
+
+		/**
+		 * Reset &amp; start simulation
+		 */
+		HistogramsGroup.prototype.start = function() {
+			// Start 
+			if (this.api) this.api.beginTrain();
+		}
+
+		/**
+		 * Stop running simulation
+		 */
+		HistogramsGroup.prototype.stop = function() {
+			// Stop train sequence
+			if (this.api) this.api.stopTrain();
+		}
+
+		/**
+		 * Compare histograms and return an object with metrics and falgs
+		 */
+		HistogramsGroup.prototype.checkHistograms = function(histo, ref) {
+			var res = {};
+
+			// Perform chi-square per bins
+			var chi2_err = Calculate.chi2WithError(histo, ref.data),
+				chi2_bins = Calculate.chi2Bins(histo, ref.data);
+
+			// Check some obvious cases
+			res.trusted = false;
+			if (chi2_err[1] &lt; chi2_err[0]) { // Error smaller than data
+				res.trusted = true;
+			} else {
+				if (chi2_err[0] &lt; 2) {
+					res.trusted = true;
+				}
+			}
+
+			res.chi2 = chi2_err[0];
+			res.chi2err = chi2_err[1];
+
+			// Helper to check if error bars are within eachother
+			// (values: [y, y+, y-, x, x+, x-])
+			var errbar_inside = function(a,b) { // a inside b
+					var ayTop = a[0]+a[1], ayBottom = a[0]-a[2],
+						byTop = b[0]+b[1], byBottom = b[0]-b[2];
+					return (ayTop &lt;= byTop) &amp;&amp; (ayBottom >= byBottom);
+				},
+				errbar_touch = function(a,b) {
+					var ayTop = a[0]+a[1], ayBottom = a[0]-a[2],
+						byTop = b[0]+b[1], byBottom = b[0]-b[2];
+					return ((ayTop >= byBottom) &amp;&amp; (ayTop &lt;= byTop)) ||
+						   ((ayBottom >= byBottom) &amp;&amp; (ayBottom &lt;= byTop));
+				}
+
+			// Reset flags
+			res.hasBlank = false;
+
+			// Reset metrics
+			var errsInside = 0,
+				errsTouch = 0;
+
+			// Start counting
+			for (var i=0; i&lt;histo.values.length; i++) {
+				if (chi2_bins[i] == 0) { // Missing bin? That's a major fault
+					res.hasBlank = true;
+					res.trusted = false;
+				} else {
+					// Check if error bars are wintin eachother
+					if (errbar_inside(histo.values[i], ref.data.values[i]))
+						errsInside++;
+					if (errbar_touch(histo.values[i], ref.data.values[i]))
+						errsTouch++;
+				}
+			}
+
+			// Update flags based on metrics
+			res.insideRatio = errsInside / histo.bins;
+			res.touchRatio = errsTouch / histo.bins;
+
+			return res;
+		}
+
+		/**
+		 * Check current errors in the histograms
+		 */
+		HistogramsGroup.prototype.getResult = function( userIsTrusting ) {
+			var allTrusted = true,
+				allFit = true,
+				bestFit = true,
+				lastError = "";
+
+			// Get metrics of all histograms
+			for (var i=0; i&lt;this.histograms.length; i++) {
+				var status = this.checkHistograms( this.histograms[i].data, this.histograms[i].ref );
+				if (status.hasBlank) // Blank data is an error right-away
+					return "err-blank";
+				if (status.trusted) {
+					if (status.chi2 > 2) { // Chi 0-2 = accepted
+						allFit = false;
+					} else if (status.chi2 > 1) { // Chi 0-1 = best
+						bestFit = false;
+					}
+				} else {
+					allTrusted = false;
+				}
+			}
+
+			// Pick a choice of words
+			if (allTrusted) {
+				if (allFit) {
+					if (userIsTrusting) {
+						return bestFit ? "perfect" : "good";
+					} else {
+						return "err-looksgood";
+					}
+				} else {
+					if (!userIsTrusting) {
+						return "good";
+					} else {
+						return "err-looksbad";
+					}
+				}
+			} else {
+				return "err-nostats";
+			}
+
+		}
+
+		///////////////////////////////////////////////////////////////////////////////////
+		// -------------------------------------------------------------------------------
+		//                            TUTORIAL SCREEN IMPLEMENTATION
+		// -------------------------------------------------------------------------------
+		///////////////////////////////////////////////////////////////////////////////////
+
+
+
+		/**
+		 * @class
+		 * @classdesc The introduction to statistics tutorial
+		 */
+		var StatsTutorial = function( hostDOM ) {
+			C.TutorialScreen.call(this, hostDOM);
+
+			// Mark host screen for cinematic
+			this.hostDOM.addClass("tutorial-stats");
+			this.vibratingDOM = $('&lt;div class="vibrator-host">&lt;/div>').appendTo(this.hostDOM);
+
+			// Prepare panels
+			this.panelMachine = $('&lt;div class="panel-load">&lt;/div>').appendTo(this.vibratingDOM);
+			this.panelEvents = $('&lt;div class="panel-event-rate">&lt;/div>').appendTo(this.vibratingDOM);
+			this.panelHistogram = $('&lt;div class="panel-histogram">&lt;/div>').appendTo(this.vibratingDOM);
+			this.panelControls = $('&lt;div class="panel-controls">&lt;/div>').appendTo(this.vibratingDOM);
+			this.panelLegends = $('&lt;div class="panel-histogram-legend">&lt;span class="box" style="background-color: #000">&lt;/span> Measurements by past experiments &amp;nbsp; &amp;nbsp; &lt;span class="box" style="background-color: rgb(0, 102, 255);">&lt;/span> Current measurements from the Quantum Simulation&lt;/div>').appendTo(this.vibratingDOM);
+
+			// Prepare progress bar
+			this.eProgressBar = $('&lt;div class="progressbar">&lt;/div>').appendTo(this.panelMachine);
+			this.eProgressBarBar = $('&lt;div class="bar">&lt;/div>').appendTo(this.eProgressBar);
+			this.eProgressBarValue = $('&lt;div class="value">Machine Load: &lt;strong>100%&lt;/strong>&lt;/div>').appendTo(this.eProgressBar);
+
+			this.eEventRate = $('&lt;div class="rate">1,000,000&lt;/div>').appendTo(this.panelEvents);
+			this.eEventRateLabel = $('&lt;div class="label">Events&lt;br />Generated&lt;/div>').appendTo(this.panelEvents);
+			this.eProgressBarBar.css("width", "50%");
+
+			// Prepare histogram features control group
+			this.gControls = $('&lt;div class="group">&lt;/div>').appendTo(this.panelControls);
+			$('&lt;span>Enable/Disable assistant features:&lt;/span>').appendTo(this.gControls);
+
+			this.eToggleErrors = $('&lt;a class="btn-toggle" href="#">Histogram error bars&lt;/a>').appendTo(this.gControls);
+			this.eToggleErrors.click((function() {
+				if (this.eToggleErrors.hasClass("active")) {
+					this.eToggleErrors.removeClass("active");
+					this.histograms.showErrorBars(false);
+				} else {
+					this.eToggleErrors.addClass("active");
+					this.histograms.showErrorBars(true);
+				}
+			}).bind(this));
+
+			this.eToggleErrorColors = $('&lt;a class="btn-toggle" href="#">Per-bin comparison colors&lt;/a>').appendTo(this.gControls);
+			this.eToggleErrorColors.click((function() {
+				if (this.eToggleErrorColors.hasClass("active")) {
+					this.eToggleErrorColors.removeClass("active");
+					this.histograms.showErrorColors(false);
+				} else {
+					this.eToggleErrorColors.addClass("active");
+					this.histograms.showErrorColors(true);
+				}
+			}).bind(this));
+
+			// Prepare chi-squared group
+			this.gChi2 = $('&lt;div class="group">&lt;/div>').appendTo(this.panelControls).hide();
+			this.chi2Label = $('&lt;strong>&lt;/strong>');
+			($('&lt;p>&amp;chi;&lt;sup>2&lt;/sup> test score = &lt;/p>').appendTo(this.gChi2)).append(this.chi2Label)
+
+			this.eToggleChi2 = $('&lt;a class="btn-toggle" href="#">&amp;chi;&lt;sup>2&lt;/sup> test score&lt;/a>')//.appendTo(this.gControls);
+			this.eToggleChi2.click((function() {
+				if (this.eToggleChi2.hasClass("active")) {
+					this.eToggleChi2.removeClass("active");
+					this.gChi2.hide();
+				} else {
+					this.eToggleChi2.addClass("active");
+					this.gChi2.show();
+				}
+			}).bind(this));
+
+			// Prepare the simulation class
+			this.histograms = new HistogramsGroup(this.panelHistogram, this.eEventRate, this.eProgressBarBar, this.eProgressBarValue, this.chi2Label);
+			this.histograms.onMaxedOut = (function(){ 
+				this.trigger('sequence.next', 'timeout');
+			}).bind(this);
+
+			// Prepare Accept results group
+			this.gControls = $('&lt;div class="group group-bottom">&lt;/div>').appendTo(this.panelControls);
+			this.eAcceptBtn = $('&lt;a class="btn-accept" href="#">This is a match&lt;/a>').appendTo(this.gControls);
+			this.eAcceptBtn.click((function() {
+
+				// Stop sequencer
+				this.histograms.stop();
+
+				// User is trusting.. check
+				var status = this.histograms.getResult(true);
+				console.log("Status: ",status);
+				this.trigger('sequence.next', status);
+
+			}).bind(this));
+
+			this.eDiscardBtn = $('&lt;a class="btn-discard" href="#">This is not a match&lt;/a>').appendTo(this.gControls);
+			this.eDiscardBtn.click((function() {
+
+				// Stop sequencer
+				this.histograms.stop();
+
+				// User is not trusting.. check
+				var status = this.histograms.getResult(false);
+				console.log("Status: ",status);
+				this.trigger('sequence.next', status);
+
+			}).bind(this));
+
+			this.eSkipTutorial = $('&lt;a class="link-skip" href="do:skip">Skip introduction tutorial&lt;/a>').appendTo(this.gControls);
+			this.eSkipTutorial.click((function(e) {
+				e.preventDefault();
+				e.stopPropagation();
+
+				// Trigger seqnece exit
+				this.trigger('sequence.exit');
+
+			}).bind(this));
+
+			// Vibration timer
+			this.vibrationTimer = setInterval(this.__vibrator.bind(this), 50);
+
+			// Register visual events
+			R.registerVisualAid("tunetutorial.controls", this.eToggleErrors, { "screen": "screen.tutorial.stats" });
+			R.registerVisualAid("tunetutorial.machine", this.panelEvents, { "screen": "screen.tutorial.stats" });
+			R.registerVisualAid("tunetutorial.submit", this.eAcceptBtn, { "screen": "screen.tutorial.stats" });
+
+		}
+		StatsTutorial.prototype = Object.create( C.TutorialScreen.prototype );
+
+		/**
+		 * Handle vibration
+		 */
+		StatsTutorial.prototype.__vibrator = function() {
+			var vibrationSize = this.histograms.vibrationWidth;
+			if (vibrationSize &lt;= 0) return;
+
+			// Calculate a random offset around the center
+			this.vibratingDOM.css({
+				'left': vibrationSize - (vibrationSize * Math.random())/2,
+				'top': vibrationSize - (vibrationSize * Math.random())/2
+			});
+		}
+
+		///////////////////////////////////////////////////////////////////////////////////
+		// -------------------------------------------------------------------------------
+		//                            INTERFACE IMPLEMENTATION
+		// -------------------------------------------------------------------------------
+		///////////////////////////////////////////////////////////////////////////////////
+
+		/**
+		 * Handle sequence configuration
+		 */
+		StatsTutorial.prototype.onSequenceConfig = function( config, cbReady ) {
+			this.trainConfig = config;
+			if (config['events'])
+				this.histograms.maxEvents = parseInt(config['events']);
+			cbReady();
+		}
+
+		/**
+		 * Handle resize vents
+		 */
+		StatsTutorial.prototype.onResize = function(width, height) {
+
+			// Resize histogram
+			this.histograms.resize( this.panelHistogram.width(), this.panelHistogram.height() );
+
+		}
+
+		/**
+		 * Initialize before show
+		 */
+		StatsTutorial.prototype.onWillShow = function(cb) {
+			this.histograms.initialize( this.trainConfig );
+			this.histograms.start();
+			cb();
+		}
+
+		/**
+		 * Resize after show
+		 */
+		StatsTutorial.prototype.onShown = function() {
+			this.histograms.resize( this.panelHistogram.width(), this.panelHistogram.height() );
+
+			// Show visual aid
+			UI.showFirstTimeAid("tunetutorial.controls");
+			UI.showFirstTimeAid("tunetutorial.machine");
+			UI.showFirstTimeAid("tunetutorial.submit");
+		}
+
+		/**
+		 * Resize after show
+		 */
+		StatsTutorial.prototype.onHidden = function() {
+			this.histograms.stop();
+		}
+
+		// Register screen component on the registry
+		R.registerComponent( 'screen.tutorial.stats', StatsTutorial, 1 );
+
+	}
+
+);</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Modules</h3><ul><li><a href="module-base_components_tuning_observable.html">base/components/tuning/observable</a></li><li><a href="module-base_components_tuning_tunable.html">base/components/tuning/tunable</a></li><li><a href="module-base_components_tuning_tuning_panel.html">base/components/tuning/tuning_panel</a></li><li><a href="module-basic_components_backdrop_explain.html">basic/components/backdrop_explain</a></li><li><a href="module-basic_components_backdrop_globe.html">basic/components/backdrop_globe</a></li><li><a href="module-basic_components_backdrop_home.html">basic/components/backdrop_home</a></li><li><a href="module-basic_components_backdrop_login.html">basic/components/backdrop_login</a></li><li><a href="module-basic_components_backdrop_machine.html">basic/components/backdrop_machine</a></li><li><a href="module-basic_components_backdrop_tuning.html">basic/components/backdrop_tuning</a></li><li><a href="module-basic_components_explain_book.html">basic/components/explain/book</a></li><li><a href="module-basic_components_explain_physics.html">basic/components/explain_physics</a></li><li><a href="module-basic_components_explain_screen.html">basic/components/explain_screen</a></li><li><a href="module-basic_components_nav_mini.html">basic/components/nav_mini</a></li><li><a href="module-basic_components_screem_courseroom.html">basic/components/screem_courseroom</a></li><li><a href="module-basic_components_screem_menu.html">basic/components/screem_menu</a></li><li><a href="module-basic_components_screem_team.html">basic/components/screem_team</a></li><li><a href="module-basic_components_screen_introgame.html">basic/components/screen_introgame</a></li><li><a href="module-basic_components_tvhead_agent.html">basic/components/tvhead_agent</a></li><li><a href="module-core_api_account.html">core/api/account</a></li><li><a href="module-core_api_chatroom.html">core/api/chatroom</a></li><li><a href="module-core_api_course.html">core/api/course</a></li><li><a href="module-core_api_interface.html">core/api/interface</a></li><li><a href="module-core_api_labsocket.html">core/api/labsocket</a></li><li><a href="module-core_api_labtrain.html">core/api/labtrain</a></li><li><a href="module-core_api_team.html">core/api/team</a></li><li><a href="module-core_apisocket.html">core/apisocket</a></li><li><a href="module-core_base_agent.html">core/base/agent</a></li><li><a href="module-core_base_component.html">core/base/component</a></li><li><a href="module-core_base_components.html">core/base/components</a></li><li><a href="module-core_base_data_widget.html">core/base/data_widget</a></li><li><a href="module-core_base_tuning_components.html">core/base/tuning_components</a></li><li><a href="module-core_base_view.html">core/base/view</a></li><li><a href="module-core_data_histogram_meta.html">core/data/histogram_meta</a></li><li><a href="module-core_db.html">core/db</a></li><li><a href="module-core_developer.html">core/developer</a></li><li><a href="module-core_feedback.html">core/feedback</a></li><li><a href="module-core_global.html">core/global</a></li><li><a href="module-core_modules_easing.html">core/modules/easing</a></li><li><a href="module-core_registry.html">core/registry</a></li><li><a href="module-core_ui.html">core/ui</a></li><li><a href="module-core_user.html">core/user</a></li><li><a href="module-core_util_animator.html">core/util/animator</a></li><li><a href="module-core_util_event_base.html">core/util/event_base</a></li><li><a href="module-core_util_math.html">core/util/math</a></li><li><a href="module-core_util_progress_aggregator.html">core/util/progress_aggregator</a></li><li><a href="module-liveq_BufferReader.html">liveq/BufferReader</a></li><li><a href="module-liveq_Calculate.html">liveq/Calculate</a></li><li><a href="module-liveq_HistogramData.html">liveq/HistogramData</a></li><li><a href="module-liveq_LabProtocol.html">liveq/LabProtocol</a></li><li><a href="module-liveq_LabSocket.html">liveq/LabSocket</a></li><li><a href="module-liveq_main.html">liveq/main</a></li><li><a href="module-liveq_ReferenceData.html">liveq/ReferenceData</a></li><li><a href="module-vas-basic_components_onscreen.html">vas-basic/components/onscreen</a></li><li><a href="module-vas-basic_components_running_screen.html">vas-basic/components/running_screen</a></li><li><a href="module-vas-basic_components_screen_bsod.html">vas-basic/components/screen_bsod</a></li><li><a href="module-vas-basic_components_tuning_screen.html">vas-basic/components/tuning_screen</a></li><li><a href="module-vas-basic_data_trainhisto.html">vas-basic/data/trainhisto</a></li><li><a href="module-vas-basic_dataviz_histogram.html">vas-basic/dataviz/histogram</a></li><li><a href="module-vas-basic_dataviz_histogram_full.html">vas-basic/dataviz/histogram_full</a></li><li><a href="module-vas-basic_dataviz_observable.html">vas-basic/dataviz/observable</a></li><li><a href="module-vas-basic_infoblock_knowledge.html">vas-basic/infoblock/knowledge</a></li><li><a href="module-vas-basic_infoblock_observable.html">vas-basic/infoblock/observable</a></li><li><a href="module-vas-basic_infoblock_tunable.html">vas-basic/infoblock/tunable</a></li><li><a href="module-vas-basic_machineparts_describe.html">vas-basic/machineparts/describe</a></li><li><a href="module-vas-basic_machineparts_paper.html">vas-basic/machineparts/paper</a></li><li><a href="module-vas-basic_machineparts_results.html">vas-basic/machineparts/results</a></li><li><a href="module-vas-basic_overlay_buy.html">vas-basic/overlay/buy</a></li><li><a href="module-vas-basic_overlay_feedback.html">vas-basic/overlay/feedback</a></li><li><a href="module-vas-basic_overlay_flash.html">vas-basic/overlay/flash</a></li><li><a href="module-vas-basic_overlay_jobstatus.html">vas-basic/overlay/jobstatus</a></li><li><a href="module-vas-basic_overlay_publicpapers.html">vas-basic/overlay/publicpapers</a></li><li><a href="module-vas-basic_overlay_SwitchTeam.html">vas-basic/overlay/SwitchTeam</a></li><li><a href="module-vas-basic_overlays_help.html">vas-basic/overlays/help</a></li><li><a href="module-vas-basic_profileparts_achievements.html">vas-basic/profileparts/achievements</a></li><li><a href="module-vas-basic_profileparts_books.html">vas-basic/profileparts/books</a></li><li><a href="module-vas-basic_profileparts_papers.html">vas-basic/profileparts/papers</a></li><li><a href="module-vas-basic_profileparts_team.html">vas-basic/profileparts/team</a></li><li><a href="module-vas-basic_profileparts_user.html">vas-basic/profileparts/user</a></li></ul><h3>Classes</h3><ul><li><a href="LiveQ.HistogramData.html">HistogramData</a></li><li><a href="module-basic_components_backdrop_explain-ExplainBackdrop.html">ExplainBackdrop</a></li><li><a href="module-basic_components_backdrop_globe-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-basic_components_backdrop_home-HomeBackdrop.html">HomeBackdrop</a></li><li><a href="module-basic_components_backdrop_home-PaswordReset.html">PaswordReset</a></li><li><a href="module-basic_components_backdrop_login-LoginBackdrop.html">LoginBackdrop</a></li><li><a href="module-basic_components_backdrop_machine-MachineBackdrop.html">MachineBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ProgressBackdrop.html">ProgressBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ResultsBackdrop.html">ResultsBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-TuningBackdrop.html">TuningBackdrop</a></li><li><a href="module-basic_components_explain_book-ExplainBook.html">ExplainBook</a></li><li><a href="module-basic_components_explain_physics-ExplainBlackboard.html">ExplainBlackboard</a></li><li><a href="module-basic_components_explain_physics-ExplainPhysics.html">ExplainPhysics</a></li><li><a href="module-basic_components_explain_screen-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-basic_components_explain_screen-HomeScreen.html">HomeScreen</a></li><li><a href="module-basic_components_explain_screen-JobsScreen.html">JobsScreen</a></li><li><a href="module-basic_components_explain_screen-KnowledgeScreen.html">KnowledgeScreen</a></li><li><a href="module-basic_components_explain_screen-StatsTutorial.html">StatsTutorial</a></li><li><a href="module-basic_components_explain_screen-TuningScreen.html">TuningScreen</a></li><li><a href="module-basic_components_nav_mini-NavMini.html">NavMini</a></li><li><a href="module-basic_components_screem_courseroom-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-basic_components_screem_menu-MenuScreen.html">MenuScreen</a></li><li><a href="module-basic_components_screem_team-TeamScreen.html">TeamScreen</a></li><li><a href="module-basic_components_screen_introgame-IntroGameScreen.html">IntroGameScreen</a></li><li><a href="module-basic_components_tvhead_agent-TVhead.html">TVhead</a></li><li><a href="module-core_base_agent-VisualAgent.html">VisualAgent</a></li><li><a href="module-core_base_components-Backdrop.html">Backdrop</a></li><li><a href="module-core_base_components-BookScreen.html">BookScreen</a></li><li><a href="module-core_base_components-BSODScreen.html">BSODScreen</a></li><li><a href="module-core_base_components-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-core_base_components-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-core_base_components-ExplainScreen.html">ExplainScreen</a></li><li><a href="module-core_base_components-HomeScreen.html">HomeScreen</a></li><li><a href="module-core_base_components-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-core_base_components-LoginScreen.html">LoginScreen</a></li><li><a href="module-core_base_components-Nav.html">Nav</a></li><li><a href="module-core_base_components-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-core_base_components-PasswordResetScreen.html">PasswordResetScreen</a></li><li><a href="module-core_base_components-Popup.html">Popup</a></li><li><a href="module-core_base_components-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-core_base_components-QuestionaireScreen.html">QuestionaireScreen</a></li><li><a href="module-core_base_components-RegisterScreen.html">RegisterScreen</a></li><li><a href="module-core_base_components-ResultsScreen.html">ResultsScreen</a></li><li><a href="module-core_base_components-RunningScreen.html">RunningScreen</a></li><li><a href="module-core_base_components-TeamScreen.html">TeamScreen</a></li><li><a href="module-core_base_components-TuningScreen.html">TuningScreen</a></li><li><a href="module-core_base_components-TutorialScreen.html">TutorialScreen</a></li><li><a href="module-core_base_component-Component.html">Component</a></li><li><a href="module-core_base_data_widget-DataWidget.html">DataWidget</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html">ObservableWidget</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html">TunableWidget</a></li><li><a href="module-core_base_tuning_components-TuningPanel.html">TuningPanel</a></li><li><a href="module-core_base_view-View.html">View</a></li><li><a href="module-core_data_histogram_meta-HistogramMetadata.html">HistogramMetadata</a></li><li><a href="module-core_util_animator-Animator.html">Animator</a></li><li><a href="module-core_util_event_base-EventBase.html">EventBase</a></li><li><a href="module-core_util_math-CoreMath.html">CoreMath</a></li><li><a href="module-core_util_progress_aggregator-ProgressAggregator.html">ProgressAggregator</a></li><li><a href="module-liveq_BufferReader-BufferReader.html">BufferReader</a></li><li><a href="module-liveq_HistogramData-HistogramData.html">HistogramData</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html">LabProtocol</a></li><li><a href="module-liveq_LabSocket-LabSocket.html">LabSocket</a></li><li><a href="module-liveq_ReferenceData-ReferenceData.html">ReferenceData</a></li><li><a href="module-vas-basic_components_running_screen-LoginScreen.html">LoginScreen</a></li><li><a href="module-vas-basic_components_running_screen-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-BSODScreen.html">BSODScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-vas-basic_dataviz_histogram-PlotHistogram.html">PlotHistogram</a></li><li><a href="Sequencer.html">Sequencer</a></li></ul><h3>Events</h3><ul><li><a href="module-core_api_labsocket-APILabSocket.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runError">runError</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:completed">completed</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:runError">runError</a></li><li><a href="module-core_base_components-CinematicScreen.html#event:completed">completed</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openGame">openGame</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openURL">openURL</a></li><li><a href="module-core_base_components-HomeScreen.html#event:changeScreen">changeScreen</a></li><li><a href="module-core_base_components-HomeScreen.html#event:playLevel">playLevel</a></li><li><a href="module-core_base_components-LoginScreen.html#event:login">login</a></li><li><a href="module-core_base_components-RunningScreen.html#event:abortRun">abortRun</a></li><li><a href="module-core_base_components-TuningScreen.html#event:changeParameters">changeParameters</a></li><li><a href="module-core_base_components-TuningScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-TuningScreen.html#event:submitParameters">submitParameters</a></li><li><a href="module-core_base_data_widget-DataWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:blurVisualAid">blurVisualAid</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:completed">completed</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:focusVisualAid">focusVisualAid</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:dataArrived">dataArrived</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramAdded">histogramAdded</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramRemoved">histogramRemoved</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramsUpdated">histogramsUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramUpdated">histogramUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:metadataUpdated">metadataUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:ready">ready</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:connected">connected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:error">error</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:log">log</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runError">runError</a></li></ul><h3>Namespaces</h3><ul><li><a href="module-liveq_Calculate-Calculate.html">Calculate</a></li></ul><h3>Global</h3><ul><li><a href="global.html#chi2-bounds">chi2-bounds</a></li><li><a href="global.html#core">core</a></li><li><a href="global.html#css">css</a></li><li><a href="global.html#db">db</a></li><li><a href="global.html#dom-host">dom-host</a></li><li><a href="global.html#enforce_http">enforce_http</a></li><li><a href="global.html#forum_vas_api">forum_vas_api</a></li><li><a href="global.html#images_url">images_url</a></li><li><a href="global.html#liveq">liveq</a></li><li><a href="global.html#version">version</a></li><li><a href="global.html#voiceapi">voiceapi</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.3.0-beta1</a> on Wed Jul 29 2015 18:29:46 GMT+0200 (CEST)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

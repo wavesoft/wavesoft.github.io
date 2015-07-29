@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: vas/basic/js/dataviz/histogram.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: vas/basic/js/dataviz/histogram.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>define(
+
+	// Dependencies
+	["jquery", "d3", "vas/core/registry","vas/core/base/data_widget" ], 
+
+	/**
+	 * This is the default data widget for visualizing a historgram
+	 *
+ 	 * @exports vas-basic/dataviz/histogram
+	 */
+	function(config, d3, R, DataWidget) {
+
+		/**
+		 * The default observable body class
+		 */
+		var DataVizHistogram = function(hostDOM) {
+
+			// Initialize widget
+			DataWidget.call(this, hostDOM);
+
+			// Prepare margin info
+			this.margin = {
+				'left': 40,
+				'top': 10,
+				'bottom': 10,
+				'right': 10,
+				'title': 5
+			};
+			this.legend = {
+				'bullet': 5,
+				'height': 16,
+				'titleMargin': 5,
+			};
+			this.errorBars = {
+				'bulletSize' : 2
+			}
+
+			// Prepare histogram SVG host
+			this.svg = d3.select( this.hostDOM[0] )
+						     .append("svg")
+						     .attr("class", "dv-plot dv-invert");
+			this.svgPlot = this.svg.append("g")
+							 .attr("transform", "translate("+this.margin.left+","+this.margin.top+")");
+			this.svgLegend = this.svgPlot.append("g")
+							.attr("class", "legend");
+
+		};
+
+		// Subclass from ObservableWidget
+		DataVizHistogram.prototype = Object.create( DataWidget.prototype );
+
+		///////////////////////////////////////////////////////////////////////////////
+		////                         UTILITY FUNCTIONS                             ////
+		///////////////////////////////////////////////////////////////////////////////
+
+		/**
+		 * A Y-scale that protects against zero values
+		 */
+		DataVizHistogram.prototype.yScaleNonZero = function(y) { 
+			if (y == 0) {
+				return this.height - this.margin.top - this.margin.bottom;
+			} else {
+				return this.yScale(y);
+			}
+		}
+
+		/**
+		 * Calculate how many points are inside each region and find
+		 * the one with the smallest number of points.
+		 *
+		 * This function will return the index of the region array specified.
+		 *
+		 * @param {array} areas - The array of the region boundaries to check (format: [x,y,w,h])
+		 */
+		DataVizHistogram.prototype.getLeastUsedRegion = function(areas, plots) {
+
+			// Initialize usage array
+			var usage = [ ];
+			for (var i=0; i&lt;areas.length; i++) {
+				usage.push(0);
+			}
+
+			// Iterate over the histograms
+			for (var j=0; j&lt;plots.length; j++) {
+				var histo = plots[j].data;
+				// Run over bins and get point positions
+				for (var i=0; i&lt;histo.length; i++) {
+					// Get position
+					var x = this.xScale(histo[i][3]),
+						y = this.yScaleNonZero(histo[i][0]);
+
+					// Hit-test areas
+					for (var k=0; k&lt;areas.length; k++) {
+						if ( (x >= areas[k][0]) &amp;&amp; (x &lt;= (areas[k][0]+areas[k][2])) &amp;&amp;
+							 (y >= areas[k][1]) &amp;&amp; (y &lt;= (areas[k][1]+areas[k][3])) ) {
+							usage[k] += 1;
+							break;
+						}
+					}
+				}
+			}
+
+
+			// Find minimum
+			var min=usage[0], min_index=0;
+			for (var i=0; i&lt;usage.length; i++) {
+				if (usage[i]&lt;min) {
+					min=usage[i];
+					min_index=i;
+				}
+			}
+
+			// Return index
+			return min_index;
+
+		}
+
+		/**
+		 * Regenerate histogram data
+		 */
+		DataVizHistogram.prototype.regen = function() {
+
+			// If we have no data, plot no data points
+			if ((this.data != null) &amp;&amp; !this.data.empty) {
+
+				// ------------------------------------------
+				//  Data Definition
+				// ------------------------------------------
+
+				// Calculate bounds
+				var bounds = this.data.getBounds(),
+					refBounds = this.ref.data.getBounds(),
+					xMin  = Math.min( bounds[0], refBounds[0] ),
+					xMax  = Math.max( bounds[1], refBounds[1] ),
+					yMin  = Math.min( bounds[2], refBounds[2] ),
+					yMax  = Math.max( bounds[3], refBounds[3] ),
+					yZero = Math.min( bounds[4], refBounds[4] ),
+					width = this.width - this.margin.left - this.margin.right,
+					height = this.height - this.margin.top - this.margin.bottom;
+
+				// Check what kind of scale do we use
+				var xScaleClass = d3.scale.linear,
+					yScaleClass = d3.scale.log;
+
+				// Prepare X Axis
+				this.xScale = xScaleClass()
+					.range([0, width])
+					.domain([xMin, xMax])
+					.clamp(true);
+				this.xAxis = d3.svg.axis()
+					.scale(this.xScale)
+					.orient("bottom");
+
+				// Prepare Y Axis
+				this.yScale = yScaleClass()
+					.range([height, 0])
+					.domain([yMin, yMax])
+					.clamp(true);
+				this.yAxis = d3.svg.axis()
+					.scale(this.yScale)
+					.orient("left");
+
+				// Prepare plot configuration
+				var plots = [
+					{
+						'id'	 : 'plot-ref',
+						'legend' : 'Reference Data',
+						'color'  : '#00ffff',
+						'data'   : this.ref.data.values
+					},
+					{
+						'id'	 : 'plot-sim',
+						'legend' : 'Simulation Data',
+						'color'  : '#ff0000',
+						'data'   : this.data.values
+					}
+				];
+
+				// ------------------------------------------
+				//  Graphic Definitions
+				// ------------------------------------------
+
+				var self = this;
+				var pathLine = d3.svg.line()
+					.x(function(d,i) { return self.xScale(d[3]); })
+					.y(function(d,i) { return self.yScaleNonZero(d[0]); });
+
+				// ------------------------------------------
+				//  Graphic Design - Plots
+				// ------------------------------------------
+
+				// Loop over plots
+				for (var j=0; j&lt;plots.length; j++) {
+					var plot = plots[j];
+
+					// =============
+					//     Plots 
+					// =============
+
+					// Access plot's group
+					var group = this.svgPlot.select("g.plot#"+plot.id);
+					if (group.empty()) {
+						group = this.svgPlot.append("g")
+							.attr("class", "plot")
+							.attr("id", plot.id);
+					}
+
+					// Access D3 record for this element
+					var record = group.selectAll("path.plot-line")
+									.data([plot.data]);
+
+					// Enter
+					record.enter()
+						.append("svg:path")
+							.attr("class", "plot-line")
+							.attr("stroke", plot.color);
+
+					// Update
+					record.attr("d", pathLine)
+							.attr("stroke", plot.color);
+
+					// Delete
+					record.exit()
+						.remove();
+
+					// =============
+					//  Data Points
+					// =============
+
+					var record = group.selectAll("path.plot-bullet")
+									.data(plot.data);
+
+					// Enter
+					record.enter()
+						.append("svg:path")
+							.attr("class", "plot-bullet")
+							.attr("stroke", plot.color);
+
+					// Update
+					record
+						.attr("transform", function(d,i){
+							return "translate(" + self.xScale(d[3]) + "," + self.yScaleNonZero(d[0]) + ")"
+						})
+						.attr("d", function(d,i) {
+							var bs = self.errorBars.bulletSize/2;
+
+							// Path for the bullet
+							var D_RECT= "M"+(-bs)+","+(-bs)+
+										"L"+bs+","+(-bs)+
+										"L"+bs+","+bs+
+										"L"+(-bs)+","+bs+
+										"Z";
+
+							// Calculate error bar sizes
+							var e_up = self.yScaleNonZero(d[0]) - self.yScaleNonZero(d[0]+d[1]),
+								e_dn = self.yScaleNonZero(d[0]-d[2]) - self.yScaleNonZero(d[0]);
+
+							// Draw upper error bar
+							var D_YEUP = "M"+(-bs)+","+(-e_up)+"L"+bs+","+(-e_up)+"Z" +
+										 "M0,"+(-e_up)+"L0,"+(-bs)+"Z";
+							var D_YEDN = "M"+(-bs)+","+e_dn+"L"+bs+","+e_dn+"Z" +
+										 "M0,"+e_dn+"L0,"+bs+"Z";
+
+							return  D_YEUP+D_YEDN + D_RECT;
+
+						})
+						.attr("stroke", plot.color);
+
+				}
+
+				// ------------------------------------------
+				//  Graphic Design - Axes
+				// ------------------------------------------
+
+				// Create the X and Y axis
+				if (!this.xAxisGraphic)
+					this.xAxisGraphic = this.svgPlot.append("g")
+					    .attr("class", "x axis")
+					    .attr("transform", "translate(0,"+height+")")
+					    .call(this.xAxis);
+				if (!this.yAxisGraphic)
+					this.yAxisGraphic = this.svgPlot.append("g")
+					    .attr("class", "y axis")
+					    .call(this.yAxis);
+
+				// Render them
+				this.xAxisGraphic.call(this.xAxis);
+				this.yAxisGraphic.call(this.yAxis);
+
+				// ------------------------------------------
+				//  Graphic Design - Legend
+				// ------------------------------------------
+
+				//
+				// Find in which region to place the legend.
+				// The placeAt gets one of the following values:
+				//
+				//  +---+---+
+				//  | 0 | 1 |
+				//  +---+---+
+				//  | 2 | 3 |
+				//  +---+---+
+				//
+				var midW = width/2, midH = height/2,
+					lb = this.legend.bullet,
+					placeAt = this.getLeastUsedRegion([
+							[0,0,midW,midH], [midW,0,midW,midH],
+							[0,midH,midW,midH], [midW,midH,midW,midH]
+						], plots);
+
+				// Calculate offsets, based on the area we should place the legend
+				var rightAlign = false, ofsX = 0, ofsY = 0, yDirection = 1;
+				if (placeAt == 0) {
+					ofsX = this.legend.titleMargin*2 + 20;
+					ofsY = 20;
+				} else if (placeAt == 1) {
+					rightAlign = true;
+					ofsX = width;
+					ofsY = 20;
+				} else if (placeAt == 2) {
+					yDirection = -1;
+					ofsX = this.legend.titleMargin*2 + 20;
+					ofsY = height - this.legend.titleMargin*2 - 20;
+				} else if (placeAt == 3) {
+					rightAlign = true;
+					yDirection = -1;
+					ofsX = width;
+					ofsY = height - this.legend.titleMargin*2 - 20;
+				}
+
+				// Set legend alignment
+				this.svgLegend
+					.attr("transform", "translate("+ofsX+","+ofsY+")");
+
+				// Open data record
+				var record = this.svgLegend.selectAll("g.legend-entry").data(plots);
+
+				// Enter
+				var newGroups = record.enter()
+					.append("g")
+						.attr("class", "legend-entry");
+					if (rightAlign) {
+						newGroups.append("path")
+							.attr("d", "M"+(-lb)+","+(-lb/2)
+									  +"L0,"+(-lb/2)
+									  +"L0,"+(lb/2)
+									  +"L"+(-lb)+","+(lb/2)
+									  +"Z" );
+						newGroups.append("text")
+							.attr("transform", "translate("+(-lb-4)+",0)")
+							.style("dominant-baseline", "middle")
+							.style("text-anchor", "end" );
+					} else {
+						newGroups.append("path")
+							.attr("d", "M"+lb+","+(-lb/2)
+									  +"L0,"+(-lb/2)
+									  +"L0,"+(lb/2)
+									  +"L"+lb+","+(lb/2)
+									  +"Z" );
+						newGroups.append("text")
+							.attr("transform", "translate("+(lb+4)+",0)")
+							.style("dominant-baseline", "middle")
+							.style("text-anchor", "start" );
+					}
+
+				// Update
+				record
+					.attr("transform", function(d,i) { 
+						return "translate(0,"+(yDirection*i*self.legend.height)+")"
+					});
+				record.selectAll("text")
+					.text(function(d,i) { return d.legend + (d.data.interpolated?" [Estimate]":"") });
+				record.selectAll("path")
+					.attr("fill", function(d,i) { 
+						var color = d.color;
+						if (typeof(d.color) == 'object') {
+							if (d.data.interpolated) {
+								color = d.color[1];
+							} else {
+								color = d.color[0];
+							}
+						}
+						return color; 
+					});
+
+				// Delete
+				record.exit()
+					.remove();
+
+			}
+
+		}
+
+		///////////////////////////////////////////////////////////////////////////////
+		////                          EVENT HANDLERS                               ////
+		///////////////////////////////////////////////////////////////////////////////
+
+		/**
+		 * Update the histogram with the data given
+		 * @param {object} data - The new data to render on the histogram
+		 */
+		DataVizHistogram.prototype.onUpdate = function( data ) {
+
+			// Prepare data variables
+			if (!data) {
+				this.data = null;
+				this.ref = null;
+			} else {
+				this.data = data['data'];
+				this.ref = data['ref'];
+			}
+
+			// Regen plot
+			this.regen();
+			
+		}
+
+		/**
+		 * Hide histogram when to be hidden
+		 * @param {function} cb - Callback to fire when hiding process completed
+		 */
+		 /*
+		DataVizHistogram.prototype.onWillHide = function( cb ) {
+			$(this.svg).hide();
+			cb();
+		}
+		*/
+
+		/**
+		 * Hide histogram when to be shown
+		 * @param {function} cb - Callback to fire when showing process completed
+		 */
+		 /*
+		DataVizHistogram.prototype.onWillShow = function( cb ) {
+			$(this.svg).show();
+			cb();
+		}
+		*/
+
+		/**
+		 * Update the histogram with the data given
+		 * @param {object} data - The new data to render on the histogram
+		 */
+		DataVizHistogram.prototype.onMetaUpdate = function( widget ) {
+
+		}
+
+		/**
+		 * Resize histogram to fit container
+		 * @param {int} width - The width of the container
+		 * @param {int} height - The height of the container
+		 */
+		DataVizHistogram.prototype.onResize = function( width, height ) {
+			this.width = width;
+			this.height = height;
+
+			// Resize SVG
+			this.svg
+				.attr("width", width)
+				.attr("height", height);
+
+			// Regen plot
+			this.regen();
+
+		}
+
+		// Store histogram data visualization on registry
+		R.registerComponent( 'dataviz.histogram', DataVizHistogram, 1 );
+
+	}
+
+);</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Modules</h3><ul><li><a href="module-base_components_tuning_observable.html">base/components/tuning/observable</a></li><li><a href="module-base_components_tuning_tunable.html">base/components/tuning/tunable</a></li><li><a href="module-base_components_tuning_tuning_panel.html">base/components/tuning/tuning_panel</a></li><li><a href="module-basic_components_backdrop_explain.html">basic/components/backdrop_explain</a></li><li><a href="module-basic_components_backdrop_globe.html">basic/components/backdrop_globe</a></li><li><a href="module-basic_components_backdrop_home.html">basic/components/backdrop_home</a></li><li><a href="module-basic_components_backdrop_login.html">basic/components/backdrop_login</a></li><li><a href="module-basic_components_backdrop_machine.html">basic/components/backdrop_machine</a></li><li><a href="module-basic_components_backdrop_tuning.html">basic/components/backdrop_tuning</a></li><li><a href="module-basic_components_explain_book.html">basic/components/explain/book</a></li><li><a href="module-basic_components_explain_physics.html">basic/components/explain_physics</a></li><li><a href="module-basic_components_explain_screen.html">basic/components/explain_screen</a></li><li><a href="module-basic_components_nav_mini.html">basic/components/nav_mini</a></li><li><a href="module-basic_components_screem_courseroom.html">basic/components/screem_courseroom</a></li><li><a href="module-basic_components_screem_menu.html">basic/components/screem_menu</a></li><li><a href="module-basic_components_screem_team.html">basic/components/screem_team</a></li><li><a href="module-basic_components_screen_introgame.html">basic/components/screen_introgame</a></li><li><a href="module-basic_components_tvhead_agent.html">basic/components/tvhead_agent</a></li><li><a href="module-core_api_account.html">core/api/account</a></li><li><a href="module-core_api_chatroom.html">core/api/chatroom</a></li><li><a href="module-core_api_course.html">core/api/course</a></li><li><a href="module-core_api_interface.html">core/api/interface</a></li><li><a href="module-core_api_labsocket.html">core/api/labsocket</a></li><li><a href="module-core_api_labtrain.html">core/api/labtrain</a></li><li><a href="module-core_api_team.html">core/api/team</a></li><li><a href="module-core_apisocket.html">core/apisocket</a></li><li><a href="module-core_base_agent.html">core/base/agent</a></li><li><a href="module-core_base_component.html">core/base/component</a></li><li><a href="module-core_base_components.html">core/base/components</a></li><li><a href="module-core_base_data_widget.html">core/base/data_widget</a></li><li><a href="module-core_base_tuning_components.html">core/base/tuning_components</a></li><li><a href="module-core_base_view.html">core/base/view</a></li><li><a href="module-core_data_histogram_meta.html">core/data/histogram_meta</a></li><li><a href="module-core_db.html">core/db</a></li><li><a href="module-core_developer.html">core/developer</a></li><li><a href="module-core_feedback.html">core/feedback</a></li><li><a href="module-core_global.html">core/global</a></li><li><a href="module-core_modules_easing.html">core/modules/easing</a></li><li><a href="module-core_registry.html">core/registry</a></li><li><a href="module-core_ui.html">core/ui</a></li><li><a href="module-core_user.html">core/user</a></li><li><a href="module-core_util_animator.html">core/util/animator</a></li><li><a href="module-core_util_event_base.html">core/util/event_base</a></li><li><a href="module-core_util_math.html">core/util/math</a></li><li><a href="module-core_util_progress_aggregator.html">core/util/progress_aggregator</a></li><li><a href="module-liveq_BufferReader.html">liveq/BufferReader</a></li><li><a href="module-liveq_Calculate.html">liveq/Calculate</a></li><li><a href="module-liveq_HistogramData.html">liveq/HistogramData</a></li><li><a href="module-liveq_LabProtocol.html">liveq/LabProtocol</a></li><li><a href="module-liveq_LabSocket.html">liveq/LabSocket</a></li><li><a href="module-liveq_main.html">liveq/main</a></li><li><a href="module-liveq_ReferenceData.html">liveq/ReferenceData</a></li><li><a href="module-vas-basic_components_onscreen.html">vas-basic/components/onscreen</a></li><li><a href="module-vas-basic_components_running_screen.html">vas-basic/components/running_screen</a></li><li><a href="module-vas-basic_components_screen_bsod.html">vas-basic/components/screen_bsod</a></li><li><a href="module-vas-basic_components_tuning_screen.html">vas-basic/components/tuning_screen</a></li><li><a href="module-vas-basic_data_trainhisto.html">vas-basic/data/trainhisto</a></li><li><a href="module-vas-basic_dataviz_histogram.html">vas-basic/dataviz/histogram</a></li><li><a href="module-vas-basic_dataviz_histogram_full.html">vas-basic/dataviz/histogram_full</a></li><li><a href="module-vas-basic_dataviz_observable.html">vas-basic/dataviz/observable</a></li><li><a href="module-vas-basic_infoblock_knowledge.html">vas-basic/infoblock/knowledge</a></li><li><a href="module-vas-basic_infoblock_observable.html">vas-basic/infoblock/observable</a></li><li><a href="module-vas-basic_infoblock_tunable.html">vas-basic/infoblock/tunable</a></li><li><a href="module-vas-basic_machineparts_describe.html">vas-basic/machineparts/describe</a></li><li><a href="module-vas-basic_machineparts_paper.html">vas-basic/machineparts/paper</a></li><li><a href="module-vas-basic_machineparts_results.html">vas-basic/machineparts/results</a></li><li><a href="module-vas-basic_overlay_buy.html">vas-basic/overlay/buy</a></li><li><a href="module-vas-basic_overlay_feedback.html">vas-basic/overlay/feedback</a></li><li><a href="module-vas-basic_overlay_flash.html">vas-basic/overlay/flash</a></li><li><a href="module-vas-basic_overlay_jobstatus.html">vas-basic/overlay/jobstatus</a></li><li><a href="module-vas-basic_overlay_publicpapers.html">vas-basic/overlay/publicpapers</a></li><li><a href="module-vas-basic_overlay_SwitchTeam.html">vas-basic/overlay/SwitchTeam</a></li><li><a href="module-vas-basic_overlays_help.html">vas-basic/overlays/help</a></li><li><a href="module-vas-basic_profileparts_achievements.html">vas-basic/profileparts/achievements</a></li><li><a href="module-vas-basic_profileparts_books.html">vas-basic/profileparts/books</a></li><li><a href="module-vas-basic_profileparts_papers.html">vas-basic/profileparts/papers</a></li><li><a href="module-vas-basic_profileparts_team.html">vas-basic/profileparts/team</a></li><li><a href="module-vas-basic_profileparts_user.html">vas-basic/profileparts/user</a></li></ul><h3>Classes</h3><ul><li><a href="LiveQ.HistogramData.html">HistogramData</a></li><li><a href="module-basic_components_backdrop_explain-ExplainBackdrop.html">ExplainBackdrop</a></li><li><a href="module-basic_components_backdrop_globe-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-basic_components_backdrop_home-HomeBackdrop.html">HomeBackdrop</a></li><li><a href="module-basic_components_backdrop_home-PaswordReset.html">PaswordReset</a></li><li><a href="module-basic_components_backdrop_login-LoginBackdrop.html">LoginBackdrop</a></li><li><a href="module-basic_components_backdrop_machine-MachineBackdrop.html">MachineBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ProgressBackdrop.html">ProgressBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ResultsBackdrop.html">ResultsBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-TuningBackdrop.html">TuningBackdrop</a></li><li><a href="module-basic_components_explain_book-ExplainBook.html">ExplainBook</a></li><li><a href="module-basic_components_explain_physics-ExplainBlackboard.html">ExplainBlackboard</a></li><li><a href="module-basic_components_explain_physics-ExplainPhysics.html">ExplainPhysics</a></li><li><a href="module-basic_components_explain_screen-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-basic_components_explain_screen-HomeScreen.html">HomeScreen</a></li><li><a href="module-basic_components_explain_screen-JobsScreen.html">JobsScreen</a></li><li><a href="module-basic_components_explain_screen-KnowledgeScreen.html">KnowledgeScreen</a></li><li><a href="module-basic_components_explain_screen-StatsTutorial.html">StatsTutorial</a></li><li><a href="module-basic_components_explain_screen-TuningScreen.html">TuningScreen</a></li><li><a href="module-basic_components_nav_mini-NavMini.html">NavMini</a></li><li><a href="module-basic_components_screem_courseroom-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-basic_components_screem_menu-MenuScreen.html">MenuScreen</a></li><li><a href="module-basic_components_screem_team-TeamScreen.html">TeamScreen</a></li><li><a href="module-basic_components_screen_introgame-IntroGameScreen.html">IntroGameScreen</a></li><li><a href="module-basic_components_tvhead_agent-TVhead.html">TVhead</a></li><li><a href="module-core_base_agent-VisualAgent.html">VisualAgent</a></li><li><a href="module-core_base_components-Backdrop.html">Backdrop</a></li><li><a href="module-core_base_components-BookScreen.html">BookScreen</a></li><li><a href="module-core_base_components-BSODScreen.html">BSODScreen</a></li><li><a href="module-core_base_components-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-core_base_components-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-core_base_components-ExplainScreen.html">ExplainScreen</a></li><li><a href="module-core_base_components-HomeScreen.html">HomeScreen</a></li><li><a href="module-core_base_components-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-core_base_components-LoginScreen.html">LoginScreen</a></li><li><a href="module-core_base_components-Nav.html">Nav</a></li><li><a href="module-core_base_components-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-core_base_components-PasswordResetScreen.html">PasswordResetScreen</a></li><li><a href="module-core_base_components-Popup.html">Popup</a></li><li><a href="module-core_base_components-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-core_base_components-QuestionaireScreen.html">QuestionaireScreen</a></li><li><a href="module-core_base_components-RegisterScreen.html">RegisterScreen</a></li><li><a href="module-core_base_components-ResultsScreen.html">ResultsScreen</a></li><li><a href="module-core_base_components-RunningScreen.html">RunningScreen</a></li><li><a href="module-core_base_components-TeamScreen.html">TeamScreen</a></li><li><a href="module-core_base_components-TuningScreen.html">TuningScreen</a></li><li><a href="module-core_base_components-TutorialScreen.html">TutorialScreen</a></li><li><a href="module-core_base_component-Component.html">Component</a></li><li><a href="module-core_base_data_widget-DataWidget.html">DataWidget</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html">ObservableWidget</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html">TunableWidget</a></li><li><a href="module-core_base_tuning_components-TuningPanel.html">TuningPanel</a></li><li><a href="module-core_base_view-View.html">View</a></li><li><a href="module-core_data_histogram_meta-HistogramMetadata.html">HistogramMetadata</a></li><li><a href="module-core_util_animator-Animator.html">Animator</a></li><li><a href="module-core_util_event_base-EventBase.html">EventBase</a></li><li><a href="module-core_util_math-CoreMath.html">CoreMath</a></li><li><a href="module-core_util_progress_aggregator-ProgressAggregator.html">ProgressAggregator</a></li><li><a href="module-liveq_BufferReader-BufferReader.html">BufferReader</a></li><li><a href="module-liveq_HistogramData-HistogramData.html">HistogramData</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html">LabProtocol</a></li><li><a href="module-liveq_LabSocket-LabSocket.html">LabSocket</a></li><li><a href="module-liveq_ReferenceData-ReferenceData.html">ReferenceData</a></li><li><a href="module-vas-basic_components_running_screen-LoginScreen.html">LoginScreen</a></li><li><a href="module-vas-basic_components_running_screen-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-BSODScreen.html">BSODScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-vas-basic_dataviz_histogram-PlotHistogram.html">PlotHistogram</a></li><li><a href="Sequencer.html">Sequencer</a></li></ul><h3>Events</h3><ul><li><a href="module-core_api_labsocket-APILabSocket.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runError">runError</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:completed">completed</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:runError">runError</a></li><li><a href="module-core_base_components-CinematicScreen.html#event:completed">completed</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openGame">openGame</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openURL">openURL</a></li><li><a href="module-core_base_components-HomeScreen.html#event:changeScreen">changeScreen</a></li><li><a href="module-core_base_components-HomeScreen.html#event:playLevel">playLevel</a></li><li><a href="module-core_base_components-LoginScreen.html#event:login">login</a></li><li><a href="module-core_base_components-RunningScreen.html#event:abortRun">abortRun</a></li><li><a href="module-core_base_components-TuningScreen.html#event:changeParameters">changeParameters</a></li><li><a href="module-core_base_components-TuningScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-TuningScreen.html#event:submitParameters">submitParameters</a></li><li><a href="module-core_base_data_widget-DataWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:blurVisualAid">blurVisualAid</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:completed">completed</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:focusVisualAid">focusVisualAid</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:dataArrived">dataArrived</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramAdded">histogramAdded</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramRemoved">histogramRemoved</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramsUpdated">histogramsUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramUpdated">histogramUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:metadataUpdated">metadataUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:ready">ready</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:connected">connected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:error">error</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:log">log</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runError">runError</a></li></ul><h3>Namespaces</h3><ul><li><a href="module-liveq_Calculate-Calculate.html">Calculate</a></li></ul><h3>Global</h3><ul><li><a href="global.html#chi2-bounds">chi2-bounds</a></li><li><a href="global.html#core">core</a></li><li><a href="global.html#css">css</a></li><li><a href="global.html#db">db</a></li><li><a href="global.html#dom-host">dom-host</a></li><li><a href="global.html#enforce_http">enforce_http</a></li><li><a href="global.html#forum_vas_api">forum_vas_api</a></li><li><a href="global.html#images_url">images_url</a></li><li><a href="global.html#liveq">liveq</a></li><li><a href="global.html#version">version</a></li><li><a href="global.html#voiceapi">voiceapi</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.3.0-beta1</a> on Wed Jul 29 2015 18:29:46 GMT+0200 (CEST)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

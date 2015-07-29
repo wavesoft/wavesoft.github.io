@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: vas/basic/js/components/screen_introgame.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: vas/basic/js/components/screen_introgame.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>
+define(
+
+	// Requirements
+	[
+		"jquery", "jquery-knob",
+		"vas/core/registry", 
+		"vas/core/ui",
+		"vas/core/base/view", 
+		"vas/core/user",
+		"ccl-tracker",
+		"text!vas/basic/tpl/introgame.html",
+	],
+
+	/**
+	 * Basic version of the introduction game
+	 *
+	 * @exports basic/components/screen_introgame
+	 */
+	function($, jqKnob, R, UI, View, User, Analytics, tplIntroGame ) {
+
+		/**
+		 * Normal Distribution Probability Density Function
+		 */
+		function ndpdf(x,m,s2) {
+			var s = Math.sqrt(s2),
+				p = -Math.pow(x-m,2)/(2*s2);
+			return (1/(s*Math.sqrt(2*Math.PI)))*Math.pow(Math.E, p);
+		}
+
+		/**
+		 * Return the normal distribution composed of 'bins' bins,
+		 * ranged between 'min' and 'max', and focus on mean 'mean',
+		 * using the s2 value specified.
+		 *
+		 * Normalize response to maximum height 'height'
+		 */
+		function ndist( bins, min, max, mean, s2, height, hOfffset ) {
+			var ans = [],
+				binw = parseInt((max - min) / bins),
+				x = min;
+
+			// Map [-5, 5] to [min, max]
+			var ndremap = function(v) {
+				return ((v-min)/(max-min))*10-5;
+			};
+
+			// Distribute values to bins
+			while (x &lt; max) {
+				var xl = x, xh = x + binw; x += binw;
+				var xm = (xl+xh) / 2;
+
+				// Generate normal distribution values
+				ans.push( ndpdf( ndremap(xm), ndremap(mean), s2 ) * (height-hOfffset*2) + hOfffset );
+			}
+
+			// Return bin heights
+			return ans;
+		}
+
+		/**
+		 * @class
+		 * @classdesc The introduction game screen
+		 */
+		var IntroGameScreen = function( hostDOM ) {
+			View.call(this, hostDOM);
+
+			hostDOM.addClass("screen-introgame font-handwriting");
+			this.loadTemplate( tplIntroGame );
+
+			// The two parameter values
+			this.maxEvents  =   35;
+			this.parameters = 	{a: 0.333333, b: 0.666666};
+			this.values = 		{ vf:12, vs2:0.2, xf: 15, xs2: 4, h: 300, hofs:20 };
+			this.easeValues = 	{ vf:12,  vs2:0.2, xf: 15,  xs2: 4, h:300, hofs:20 };
+			this.dials = [];
+			this.pendingStatusUpdate = false;
+			this.checkHistos = false;
+			this.vbins = [];
+			this.xbins = []
+
+			window.game = this;
+
+			// handle submit request
+			this.handleDoURL('simulate', (function() {
+
+				// Recalculate values
+				this.recalculateValues();
+
+			}).bind(this));
+			this.handleDoURL('continue', (function() {
+
+				// Trigger next action in the sequence
+				this.trigger('sequence.next', 'continue'); // [SEQUENCING]
+
+				Analytics.fireEvent("intro.skip", {
+					"id": (this.checkHistos ? "val-histo" : "val-single"),
+					"time": Analytics.stopTimer("introgame-tries"),
+				});
+
+			}).bind(this));
+
+
+			// Handle parameter containers
+			this.select(".parm", (function(dom) {
+
+				this.dials = [];
+				dom.each((function(i,elm) {
+					var dom = $(elm);
+
+					var isLeft = dom.hasClass("parm-left");
+
+					// Create the input dial
+					var dial = dom.find("input.dial").knob({
+						'width'				: 100,
+						'height'			: 100,
+						'min'  				: 0,
+						'max'  				: 100,
+						'step' 				: 1,
+						'displayPrevious'	: true,
+						'fgColor'			: "#3498DB",
+						'bgColor'			: "#BDC3C7",
+						'release' 			: (function(isLeft) {
+
+							return function(v) {
+								// Update parameter value
+								if (isLeft) {
+									this.parameters.a = v/100;
+								} else {
+									this.parameters.b = v/100;
+								}
+							}
+
+						})(isLeft).bind(this)
+					});
+
+					// Register visual aids
+					if (isLeft) {
+						R.registerVisualAid("introgame.tunable.a", dom);
+					} else {
+						R.registerVisualAid("introgame.tunable.b", dom);
+					}
+
+					this.dials.push(dial);
+
+				}).bind(this));
+
+			}).bind(this));
+
+			// Register other visual aids
+			this.select(".btn-submit", function(dom) {
+				R.registerVisualAid("introgame.submit", dom);
+			});
+			this.select(".scale", function(dom) {
+				R.registerVisualAid("introgame.results", dom);
+			});
+
+			// Blink blinkable elements
+			setInterval((function() {
+				var blinker = this.select(".blink");
+				if (blinker.length == 0) return;
+				blinker.toggleClass("blink-hidden");
+			}).bind(this), 500);
+
+			// Render view
+			this.renderView();
+
+		}
+		IntroGameScreen.prototype = Object.create( View.prototype );
+
+		/**
+		 * Recalculate values
+		 */
+		IntroGameScreen.prototype.recalculateValues = function() {
+
+	//		((a + b)/2)*scale = target
+
+			var vs2_min = 0.2,
+				vs2_max = 5;
+
+			// vf is a correlation between a and b
+			this.values.vf = ((this.parameters.a + (1.0-this.parameters.b)) / 2) * 35;
+			this.values.vs2 = ((this.parameters.a*2 + this.parameters.b*0.5) / 2.5) * (vs2_max-vs2_min) + vs2_min;
+			this.values.h = 300;
+			this.values.hofs = 20;
+			this.easeValues.h = 0;
+			this.easeValues.hofs = 0;
+
+			// Update result
+			this.select(".result").attr("class", "result blink").text("Simulating");
+			this.select(".scale").removeClass("no-value");
+			this.pendingStatusUpdate = true;
+
+		}
+
+		/**
+		 * Ease properties
+		 */
+		IntroGameScreen.prototype.animateProperties = function() {
+			var changed = false,
+				tollerance = 0.08,
+				easeFactor = 25,
+				properties = ['vf','vs2','xf','xs2', 'h', 'hofs'];
+
+			// Apply to all properties
+			for (var i=0; i&lt;properties.length; i++) {
+				var p = properties[i],
+					diff = this.values[p] - this.easeValues[p];
+				if (diff == 0) {
+					/* Not changed */
+				} else if (Math.abs(diff) &lt; tollerance) {
+					this.easeValues[p] = this.values[p];
+					changed = true;
+				} else {
+					this.easeValues[p] += diff / easeFactor;
+					changed = true;
+				}
+			}
+
+			// Return true if nothing changed
+			return changed;
+
+		}
+
+		/**
+		 * Schedule next animation step
+		 */
+		IntroGameScreen.prototype.nextStep = function() {
+			// Schedule next animation
+			setTimeout((function() {
+				requestAnimationFrame( this.animationStep.bind(this) );
+			}).bind(this), 33);
+		}
+
+		/**
+		 * Update model values
+		 */
+		IntroGameScreen.prototype.animationStep = function( forceRedraw ) {
+
+			// Check if we should skip redraw
+			if (!(forceRedraw === true)) {
+
+				// Animate properties and don't do anything
+				// if nothing changed
+				if (!this.animateProperties()) {
+
+					// Keep animation
+					this.nextStep();
+
+					// Update status when completed
+					if (this.pendingStatusUpdate) {
+						this.updateStatus();
+						this.pendingStatusUpdate = false;
+					}
+
+					return;
+				}
+
+				// If not visible, do nothing
+				if (!this.visible) {
+					return;
+				}
+
+			}
+
+			// Map [0, 35] to [0, scaleWidth]
+			var vtow = (function(v) {
+				return (v/this.maxEvents)*700;
+			}).bind(this);
+
+			// Calculate and apply normal distribution to values
+			var velms = this.select(".scale-bin > .scale-tune-value"),
+				vbins = this.vbins = ndist( velms.length, 0, this.maxEvents, this.easeValues.vf, this.easeValues.vs2, this.easeValues.h, this.easeValues.hofs );
+			velms.each((function(i,elm) {
+				$(elm).css('top', 300 - vbins[i]);
+			}).bind(this));
+
+			// Update value mean
+			this.select(".scale-average.scale-tune-value").css({
+				'left': vtow(this.easeValues.vf) - (this.checkHistos ? 0 : 20)
+			});
+			this.select(".scale-average.scale-tune-value > .average-label").text(this.easeValues.vf.toFixed(1));
+
+			// Calculate and apply normal distribution to values
+			var xelms = this.select(".scale-bin > .scale-ref-value"),
+				xbins = this.xbins = ndist( xelms.length, 0, this.maxEvents, this.easeValues.xf, this.easeValues.xs2, 300, 20 );
+			xelms.each((function(i,elm) {
+				$(elm).css('top', 300 - xbins[i]);
+			}).bind(this));
+
+			// Update value mean
+			this.select(".scale-average.scale-ref-value").css({
+				'left': vtow(this.easeValues.xf)
+			});
+			this.select(".scale-average.scale-ref-value > .average-label").text(this.easeValues.xf.toFixed(1));
+
+			// Next animation step
+			this.nextStep();
+
+		}
+
+		/**
+		 * Set simulation mode
+		 */
+		IntroGameScreen.prototype.setMode = function( withHistos ) {
+			this.checkHistos = withHistos;
+			if (!withHistos) {
+				this.select(".scale").addClass("no-histo");
+			} else {
+				this.select(".scale").removeClass("no-histo");
+			}
+		}
+
+		/**
+		 * Check the results and update status
+		 */
+		IntroGameScreen.prototype.updateStatus = function() {
+
+			var v_range  = 0.9, // Error bar on v-range
+				s2_range = 9;   // Error bar on s2-range
+
+			// Handle status change
+			var handleStatus = (function(status) {
+				if (status == 0) {
+
+					// Update to "Good"
+					this.select(".result").attr("class", "result good").text("Correct!");
+
+					// Correct answer
+					Analytics.fireEvent("intro.correct_answer", {
+						"id": (this.checkHistos ? "val-histo" : "val-single"),
+						"time": Analytics.stopTimer("introgame-tries")
+					});
+
+					// Good results also trigger "Next" sequence
+					setTimeout((function() {
+						this.trigger('sequence.next', 'continue');
+					}).bind(this), 500);
+
+				} else if (status == 1) {
+
+					// Average answer
+					Analytics.fireEvent("intro.wrong_answer", {
+						"id": (this.checkHistos ? "val-histo" : "val-single"),
+						"time": Analytics.restartTimer("introgame-tries"),
+						"reason": "average"
+					});
+
+					this.select(".result").attr("class", "result average").text("Almost there!");
+
+				} else {
+
+					// Bad answer
+					Analytics.fireEvent("intro.wrong_answer", {
+						"id": (this.checkHistos ? "val-histo" : "val-single"),
+						"time": Analytics.restartTimer("introgame-tries"),
+						"reason": "bad"
+					});
+
+					this.select(".result").attr("class", "result bad").text("Try again!");
+				}
+			}).bind(this);
+
+			// Enable skip
+			UI.showFirstTimeAid("introgame.continue");
+
+			// Compare just values
+			var delta = Math.abs(this.values.xf - this.values.vf);
+			if (delta > v_range) {
+				handleStatus(2);
+				return;
+			}
+
+			// Double-check good cases when we are also
+			// checking histograms.
+			if (!this.checkHistos) {
+
+				// Handle average and good value cases
+				if (delta > v_range/2) {
+					handleStatus(1);
+				} else {
+					handleStatus(0);
+				}
+				return;
+
+			} else {
+
+				// Compare histograms
+				var status = 0;
+				for (var i=0; i&lt;this.vbins.length; i++) {
+					var delta = Math.abs(this.xbins[i] - this.vbins[i]);
+					if (delta &lt;= s2_range/2) {
+						// We are good, don't do anything
+					} else if (delta &lt;= s2_range) {
+						// If not 2, switch to 1
+						if (status &lt; 1) status = 1;
+					} else {
+						// Bad, switch to 2
+						status = 2;
+					}
+				}
+				handleStatus(status);
+
+			}
+
+		}
+
+		/**
+		 * Prepare before show
+		 */
+		IntroGameScreen.prototype.onWillShow = function(cb) {
+
+			// Shuffle values
+			/*
+			this.parameters.a = parseInt(Math.random() * 100);
+			this.parameters.b = parseInt(Math.random() * 100);
+			this.select(".parm-left input", (function(elm) {
+				elm.val( this.parameters.a ).trigger("change")
+			}).bind(this));
+			this.select(".parm-right input", (function(elm) {
+				elm.val( this.parameters.b ).trigger("change")
+			}).bind(this));
+			*/
+
+			// Restart analytics timer
+			Analytics.restartTimer("introgame-tries");
+
+			// Display
+			this.visible = true;
+			this.renderView();
+			this.nextStep();
+			this.animationStep(true);
+			this.setMode( this.checkHistos );
+			cb();
+
+		}
+
+		/**
+		 * When shown, show visual aids
+		 */
+		IntroGameScreen.prototype.onShown = function() {
+			// Show all introgame.* first-time aids
+			UI.showAllFirstTimeAids("introgame.");
+		};
+
+		/**
+		 * Update model values
+		 */
+		IntroGameScreen.prototype.onHidden = function() {
+			this.visible = false;
+		}
+
+		/**
+		 * Make this screen sequencable
+		 */
+		IntroGameScreen.prototype.onSequenceConfig = function( config, cb ) {
+
+			// Enable/disable histograms
+			this.setMode( !!config['histograms'] );
+			cb();
+
+		}
+
+		// Register home screen
+		R.registerComponent( "screen.tutorial.introstats", IntroGameScreen, 1 );
+
+	}
+
+);
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Modules</h3><ul><li><a href="module-base_components_tuning_observable.html">base/components/tuning/observable</a></li><li><a href="module-base_components_tuning_tunable.html">base/components/tuning/tunable</a></li><li><a href="module-base_components_tuning_tuning_panel.html">base/components/tuning/tuning_panel</a></li><li><a href="module-basic_components_backdrop_explain.html">basic/components/backdrop_explain</a></li><li><a href="module-basic_components_backdrop_globe.html">basic/components/backdrop_globe</a></li><li><a href="module-basic_components_backdrop_home.html">basic/components/backdrop_home</a></li><li><a href="module-basic_components_backdrop_login.html">basic/components/backdrop_login</a></li><li><a href="module-basic_components_backdrop_machine.html">basic/components/backdrop_machine</a></li><li><a href="module-basic_components_backdrop_tuning.html">basic/components/backdrop_tuning</a></li><li><a href="module-basic_components_explain_book.html">basic/components/explain/book</a></li><li><a href="module-basic_components_explain_physics.html">basic/components/explain_physics</a></li><li><a href="module-basic_components_explain_screen.html">basic/components/explain_screen</a></li><li><a href="module-basic_components_nav_mini.html">basic/components/nav_mini</a></li><li><a href="module-basic_components_screem_courseroom.html">basic/components/screem_courseroom</a></li><li><a href="module-basic_components_screem_menu.html">basic/components/screem_menu</a></li><li><a href="module-basic_components_screem_team.html">basic/components/screem_team</a></li><li><a href="module-basic_components_screen_introgame.html">basic/components/screen_introgame</a></li><li><a href="module-basic_components_tvhead_agent.html">basic/components/tvhead_agent</a></li><li><a href="module-core_api_account.html">core/api/account</a></li><li><a href="module-core_api_chatroom.html">core/api/chatroom</a></li><li><a href="module-core_api_course.html">core/api/course</a></li><li><a href="module-core_api_interface.html">core/api/interface</a></li><li><a href="module-core_api_labsocket.html">core/api/labsocket</a></li><li><a href="module-core_api_labtrain.html">core/api/labtrain</a></li><li><a href="module-core_api_team.html">core/api/team</a></li><li><a href="module-core_apisocket.html">core/apisocket</a></li><li><a href="module-core_base_agent.html">core/base/agent</a></li><li><a href="module-core_base_component.html">core/base/component</a></li><li><a href="module-core_base_components.html">core/base/components</a></li><li><a href="module-core_base_data_widget.html">core/base/data_widget</a></li><li><a href="module-core_base_tuning_components.html">core/base/tuning_components</a></li><li><a href="module-core_base_view.html">core/base/view</a></li><li><a href="module-core_data_histogram_meta.html">core/data/histogram_meta</a></li><li><a href="module-core_db.html">core/db</a></li><li><a href="module-core_developer.html">core/developer</a></li><li><a href="module-core_feedback.html">core/feedback</a></li><li><a href="module-core_global.html">core/global</a></li><li><a href="module-core_modules_easing.html">core/modules/easing</a></li><li><a href="module-core_registry.html">core/registry</a></li><li><a href="module-core_ui.html">core/ui</a></li><li><a href="module-core_user.html">core/user</a></li><li><a href="module-core_util_animator.html">core/util/animator</a></li><li><a href="module-core_util_event_base.html">core/util/event_base</a></li><li><a href="module-core_util_math.html">core/util/math</a></li><li><a href="module-core_util_progress_aggregator.html">core/util/progress_aggregator</a></li><li><a href="module-liveq_BufferReader.html">liveq/BufferReader</a></li><li><a href="module-liveq_Calculate.html">liveq/Calculate</a></li><li><a href="module-liveq_HistogramData.html">liveq/HistogramData</a></li><li><a href="module-liveq_LabProtocol.html">liveq/LabProtocol</a></li><li><a href="module-liveq_LabSocket.html">liveq/LabSocket</a></li><li><a href="module-liveq_main.html">liveq/main</a></li><li><a href="module-liveq_ReferenceData.html">liveq/ReferenceData</a></li><li><a href="module-vas-basic_components_onscreen.html">vas-basic/components/onscreen</a></li><li><a href="module-vas-basic_components_running_screen.html">vas-basic/components/running_screen</a></li><li><a href="module-vas-basic_components_screen_bsod.html">vas-basic/components/screen_bsod</a></li><li><a href="module-vas-basic_components_tuning_screen.html">vas-basic/components/tuning_screen</a></li><li><a href="module-vas-basic_data_trainhisto.html">vas-basic/data/trainhisto</a></li><li><a href="module-vas-basic_dataviz_histogram.html">vas-basic/dataviz/histogram</a></li><li><a href="module-vas-basic_dataviz_histogram_full.html">vas-basic/dataviz/histogram_full</a></li><li><a href="module-vas-basic_dataviz_observable.html">vas-basic/dataviz/observable</a></li><li><a href="module-vas-basic_infoblock_knowledge.html">vas-basic/infoblock/knowledge</a></li><li><a href="module-vas-basic_infoblock_observable.html">vas-basic/infoblock/observable</a></li><li><a href="module-vas-basic_infoblock_tunable.html">vas-basic/infoblock/tunable</a></li><li><a href="module-vas-basic_machineparts_describe.html">vas-basic/machineparts/describe</a></li><li><a href="module-vas-basic_machineparts_paper.html">vas-basic/machineparts/paper</a></li><li><a href="module-vas-basic_machineparts_results.html">vas-basic/machineparts/results</a></li><li><a href="module-vas-basic_overlay_buy.html">vas-basic/overlay/buy</a></li><li><a href="module-vas-basic_overlay_feedback.html">vas-basic/overlay/feedback</a></li><li><a href="module-vas-basic_overlay_flash.html">vas-basic/overlay/flash</a></li><li><a href="module-vas-basic_overlay_jobstatus.html">vas-basic/overlay/jobstatus</a></li><li><a href="module-vas-basic_overlay_publicpapers.html">vas-basic/overlay/publicpapers</a></li><li><a href="module-vas-basic_overlay_SwitchTeam.html">vas-basic/overlay/SwitchTeam</a></li><li><a href="module-vas-basic_overlays_help.html">vas-basic/overlays/help</a></li><li><a href="module-vas-basic_profileparts_achievements.html">vas-basic/profileparts/achievements</a></li><li><a href="module-vas-basic_profileparts_books.html">vas-basic/profileparts/books</a></li><li><a href="module-vas-basic_profileparts_papers.html">vas-basic/profileparts/papers</a></li><li><a href="module-vas-basic_profileparts_team.html">vas-basic/profileparts/team</a></li><li><a href="module-vas-basic_profileparts_user.html">vas-basic/profileparts/user</a></li></ul><h3>Classes</h3><ul><li><a href="LiveQ.HistogramData.html">HistogramData</a></li><li><a href="module-basic_components_backdrop_explain-ExplainBackdrop.html">ExplainBackdrop</a></li><li><a href="module-basic_components_backdrop_globe-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-basic_components_backdrop_home-HomeBackdrop.html">HomeBackdrop</a></li><li><a href="module-basic_components_backdrop_home-PaswordReset.html">PaswordReset</a></li><li><a href="module-basic_components_backdrop_login-LoginBackdrop.html">LoginBackdrop</a></li><li><a href="module-basic_components_backdrop_machine-MachineBackdrop.html">MachineBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ProgressBackdrop.html">ProgressBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ResultsBackdrop.html">ResultsBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-TuningBackdrop.html">TuningBackdrop</a></li><li><a href="module-basic_components_explain_book-ExplainBook.html">ExplainBook</a></li><li><a href="module-basic_components_explain_physics-ExplainBlackboard.html">ExplainBlackboard</a></li><li><a href="module-basic_components_explain_physics-ExplainPhysics.html">ExplainPhysics</a></li><li><a href="module-basic_components_explain_screen-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-basic_components_explain_screen-HomeScreen.html">HomeScreen</a></li><li><a href="module-basic_components_explain_screen-JobsScreen.html">JobsScreen</a></li><li><a href="module-basic_components_explain_screen-KnowledgeScreen.html">KnowledgeScreen</a></li><li><a href="module-basic_components_explain_screen-StatsTutorial.html">StatsTutorial</a></li><li><a href="module-basic_components_explain_screen-TuningScreen.html">TuningScreen</a></li><li><a href="module-basic_components_nav_mini-NavMini.html">NavMini</a></li><li><a href="module-basic_components_screem_courseroom-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-basic_components_screem_menu-MenuScreen.html">MenuScreen</a></li><li><a href="module-basic_components_screem_team-TeamScreen.html">TeamScreen</a></li><li><a href="module-basic_components_screen_introgame-IntroGameScreen.html">IntroGameScreen</a></li><li><a href="module-basic_components_tvhead_agent-TVhead.html">TVhead</a></li><li><a href="module-core_base_agent-VisualAgent.html">VisualAgent</a></li><li><a href="module-core_base_components-Backdrop.html">Backdrop</a></li><li><a href="module-core_base_components-BookScreen.html">BookScreen</a></li><li><a href="module-core_base_components-BSODScreen.html">BSODScreen</a></li><li><a href="module-core_base_components-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-core_base_components-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-core_base_components-ExplainScreen.html">ExplainScreen</a></li><li><a href="module-core_base_components-HomeScreen.html">HomeScreen</a></li><li><a href="module-core_base_components-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-core_base_components-LoginScreen.html">LoginScreen</a></li><li><a href="module-core_base_components-Nav.html">Nav</a></li><li><a href="module-core_base_components-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-core_base_components-PasswordResetScreen.html">PasswordResetScreen</a></li><li><a href="module-core_base_components-Popup.html">Popup</a></li><li><a href="module-core_base_components-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-core_base_components-QuestionaireScreen.html">QuestionaireScreen</a></li><li><a href="module-core_base_components-RegisterScreen.html">RegisterScreen</a></li><li><a href="module-core_base_components-ResultsScreen.html">ResultsScreen</a></li><li><a href="module-core_base_components-RunningScreen.html">RunningScreen</a></li><li><a href="module-core_base_components-TeamScreen.html">TeamScreen</a></li><li><a href="module-core_base_components-TuningScreen.html">TuningScreen</a></li><li><a href="module-core_base_components-TutorialScreen.html">TutorialScreen</a></li><li><a href="module-core_base_component-Component.html">Component</a></li><li><a href="module-core_base_data_widget-DataWidget.html">DataWidget</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html">ObservableWidget</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html">TunableWidget</a></li><li><a href="module-core_base_tuning_components-TuningPanel.html">TuningPanel</a></li><li><a href="module-core_base_view-View.html">View</a></li><li><a href="module-core_data_histogram_meta-HistogramMetadata.html">HistogramMetadata</a></li><li><a href="module-core_util_animator-Animator.html">Animator</a></li><li><a href="module-core_util_event_base-EventBase.html">EventBase</a></li><li><a href="module-core_util_math-CoreMath.html">CoreMath</a></li><li><a href="module-core_util_progress_aggregator-ProgressAggregator.html">ProgressAggregator</a></li><li><a href="module-liveq_BufferReader-BufferReader.html">BufferReader</a></li><li><a href="module-liveq_HistogramData-HistogramData.html">HistogramData</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html">LabProtocol</a></li><li><a href="module-liveq_LabSocket-LabSocket.html">LabSocket</a></li><li><a href="module-liveq_ReferenceData-ReferenceData.html">ReferenceData</a></li><li><a href="module-vas-basic_components_running_screen-LoginScreen.html">LoginScreen</a></li><li><a href="module-vas-basic_components_running_screen-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-BSODScreen.html">BSODScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-vas-basic_dataviz_histogram-PlotHistogram.html">PlotHistogram</a></li><li><a href="Sequencer.html">Sequencer</a></li></ul><h3>Events</h3><ul><li><a href="module-core_api_labsocket-APILabSocket.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runError">runError</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:completed">completed</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:runError">runError</a></li><li><a href="module-core_base_components-CinematicScreen.html#event:completed">completed</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openGame">openGame</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openURL">openURL</a></li><li><a href="module-core_base_components-HomeScreen.html#event:changeScreen">changeScreen</a></li><li><a href="module-core_base_components-HomeScreen.html#event:playLevel">playLevel</a></li><li><a href="module-core_base_components-LoginScreen.html#event:login">login</a></li><li><a href="module-core_base_components-RunningScreen.html#event:abortRun">abortRun</a></li><li><a href="module-core_base_components-TuningScreen.html#event:changeParameters">changeParameters</a></li><li><a href="module-core_base_components-TuningScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-TuningScreen.html#event:submitParameters">submitParameters</a></li><li><a href="module-core_base_data_widget-DataWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:blurVisualAid">blurVisualAid</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:completed">completed</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:focusVisualAid">focusVisualAid</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:dataArrived">dataArrived</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramAdded">histogramAdded</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramRemoved">histogramRemoved</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramsUpdated">histogramsUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramUpdated">histogramUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:metadataUpdated">metadataUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:ready">ready</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:connected">connected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:error">error</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:log">log</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runError">runError</a></li></ul><h3>Namespaces</h3><ul><li><a href="module-liveq_Calculate-Calculate.html">Calculate</a></li></ul><h3>Global</h3><ul><li><a href="global.html#chi2-bounds">chi2-bounds</a></li><li><a href="global.html#core">core</a></li><li><a href="global.html#css">css</a></li><li><a href="global.html#db">db</a></li><li><a href="global.html#dom-host">dom-host</a></li><li><a href="global.html#enforce_http">enforce_http</a></li><li><a href="global.html#forum_vas_api">forum_vas_api</a></li><li><a href="global.html#images_url">images_url</a></li><li><a href="global.html#liveq">liveq</a></li><li><a href="global.html#version">version</a></li><li><a href="global.html#voiceapi">voiceapi</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.3.0-beta1</a> on Wed Jul 29 2015 18:29:46 GMT+0200 (CEST)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

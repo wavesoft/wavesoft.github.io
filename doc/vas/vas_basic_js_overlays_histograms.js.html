@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: vas/basic/js/overlays/histograms.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: vas/basic/js/overlays/histograms.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>define(
+
+	// Dependencies
+
+	[ "jquery", "mathjax", "sha1", "ccl-tracker", "isotope",
+	  "vas/core/registry", "vas/core/ui", "vas/core/db", "vas/core/base/component", "vas/core/apisocket", "vas/core/liveq/Calculate",
+	  "text!vas/basic/tpl/overlay/histograms.html"
+	], 
+
+	/**
+	 * This is the default component for displaying flash overlay messages
+	 *
+ 	 * @exports vas-basic/overlay/flash
+	 */
+	function($, MathJax, SHA1, Analytics, Isotope,
+		     R, UI, DB, Component, APISocket, Calculate,
+		     tpl) {
+
+		/**
+		 * The default tunable body class
+		 */
+		var OverlayHistograms = function(hostDOM) {
+
+			// Initialize widget
+			Component.call(this, hostDOM);
+			hostDOM.addClass("histograms-overlay");
+			this.isVisible = false;
+
+			// Load view template and plutins
+			this.loadTemplate(tpl);
+			this.renderView();
+
+			//
+			// We are never going to re-draw the UI,
+			// therefore we can use .select() without 
+			// callback in order to get the DOM elements
+			// we are interested in
+			//
+			this.elmHistoContainer = this.select(".histo-container");
+			this.elmDescHeader = this.select(".histo-name");
+			this.elmDescDesc = this.select(".histo-desc");
+			this.elmDescCorrelations = this.select(".histo-correlations");
+			this.elmDescFrame = this.select(".histo-fit-group");
+			this.elmDescFit = this.select(".histo-fit");
+			this.elmDescFitDetails = this.select(".histo-fit-details");
+			this.elmRightPanel = this.select(".right");
+			this.elmRightFooter = this.select(".right-footer");
+			this.elmTopNavbar = this.select(".top .nav");
+
+			// Array of histogram objects
+			this.histograms = [];
+			this.histogramIndex = {};
+			this.selectedHistogram = "";
+
+			// Initialize isotope layout mechanism
+			this.isotopeContainer = $('&lt;div>&lt;/div>').appendTo( this.elmHistoContainer );
+			this.isotopeLayout = new Isotope(this.isotopeContainer[0], {
+				itemSelector: '.histogram',
+				layoutMode: 'masonry',
+				masonry: {
+				  columnWidth: 132
+				},
+				getSortData: {
+				    // Return weight
+				    weight: (function( itemElem ) {
+				    	var hid = $(itemElem).data("hid"),
+				    		record = this.histogramIndex[hid],
+				    		fit = record.fit ? record.fit[0] : 0;
+				    	// Icons have bigger weight
+				    	if ($(itemElem).hasClass("histo-icon")) {
+				    		fit += 10000;
+				    	}
+				    	return fit;
+				    }).bind(this)
+				}
+			});
+
+			// Bind DOM events
+			var self = this;
+			this.elmTopNavbar.find("li").click(function() {
+				// Update filter selection
+				self.updateFilterSelection( this );
+			})
+
+			// Currently active filter
+			this.filter = "all";
+
+			// A unique checksum ID for the current set of histograms
+			this.checksumID = "";
+
+		};
+
+		// Subclass from ObservableWidget
+		OverlayHistograms.prototype = Object.create( Component.prototype );
+
+		/**
+		 * Return true if the histogram with the specified ID is visible
+		 */
+		OverlayHistograms.prototype.isHistogramVisible = function( hid ) {
+
+			// Require 'hid'
+			if (!hid) return false;
+
+			// Get record
+			var	record = this.histogramIndex[hid];
+			if (!record) return false;
+
+			// Test fit
+			var fit = record.fit ? record.fit[0] : 1000000.0;
+			if (this.filter == "all") {
+				return true;
+			} else if (this.filter == "bad") {
+				return (fit > 4.0);
+			} else if (this.filter == "good") {
+				return (fit &lt;= 4.0);
+			} else {
+				return false;
+			}
+		}
+
+		/**
+		 * Update the filter selection
+		 */
+		OverlayHistograms.prototype.updateFilterSelection = function( elm ) {
+			var element = $(elm);
+
+			// Select element
+			this.elmTopNavbar.find("li").removeClass("selected");
+			element.addClass("selected");
+
+			// Update filter
+			this.filter = element.data("filter")
+			this.updateLayout();
+
+		}
+
+		/**
+		 * Undefine description panel
+		 */
+		OverlayHistograms.prototype.resetDescription = function() {
+
+			// Hide right footer
+			this.elmRightFooter.hide();
+
+			// Reset text
+			this.elmDescHeader.text("Select a histogram");
+			this.elmDescDesc.html("&lt;p>Please select a histogram to see more details&lt;/p>");
+
+		}
+
+		/**
+		 * Update layout 
+		 */
+		OverlayHistograms.prototype.updateLayout = function( reloadItems ) {
+
+			// Reload items if requested
+			if (reloadItems) {
+				this.isotopeLayout.reloadItems();
+			}
+
+			// Re-arrange by weight
+			var self = this;
+			this.isotopeLayout.arrange({
+				sortBy: 'weight',
+				filter: function( element ) {
+					return self.isHistogramVisible( $(this).data("hid") );
+				}
+			});
+
+			// Check if this action will hide the active item
+			if (this.selectedHistogram &amp;&amp; !this.isHistogramVisible(this.selectedHistogram)) {
+
+				// Get histogram
+				var record = this.histogramIndex[this.selectedHistogram];
+				if (record) {
+					record.dom.removeClass("selected");
+				}
+				// Deactivate
+				this.selectedHistogram = "";
+
+				// Reset description
+				this.resetDescription();
+
+			}
+
+		}
+
+		/**
+		 * Update the description panel
+		 */
+		OverlayHistograms.prototype.updateDescription = function( record ) {
+			var chi2fit = record.fit,
+				status_msg, status_cls;
+
+			// Check on which scale is the fit
+			if (chi2fit[0] &lt; 1) { // 1 sigma
+				status_msg = "Perfect Match";
+				status_cls = "perfect";
+			} else if (chi2fit[0] &lt; 4) { // 2 sigma
+				status_msg = "Good Match";
+				status_cls = "good";
+			} else if (chi2fit[0] &lt; 9) { // 3 sigma
+				status_msg = "Fair Match";
+				status_cls = "average";
+			} else {
+				status_msg = "Bad Match";						
+				status_cls = "bad";
+			}
+
+			// Update fit details
+			this.elmDescFrame.attr("class", "histo-fit-group "+ status_cls);
+			this.elmDescFit.text(status_msg);
+			this.elmDescFitDetails.html(
+					'&lt;div>&lt;strong>Events:&lt;/strong> ' + record.nevts + '&lt;/div>' + 
+					'&lt;div>&lt;strong>Error:&lt;/strong> ' + chi2fit[0].toFixed(2) + ' ± ' + chi2fit[1].toFixed(2) + '&lt;/div>'
+				);
+
+			// Update description
+			this.elmDescCorrelations.empty();
+			if (!record.obs) {
+				// Missing observable details
+				this.elmDescHeader.text(id);
+				this.elmDescDesc.text("(Description is missing)");
+			} else {
+
+				// Update observable details
+				this.elmDescHeader.html( record.obs.title );
+				this.elmDescDesc.html( record.obs.desc );
+
+				// Add correlations
+				if (record.obs.correlations) {
+					this.elmDescCorrelations.append($('&lt;div class="correlation-label">This historam is sensitive to:&lt;/div>'));
+					for (var i=0; i&lt;record.obs.correlations.length; i++) {
+						var c = record.obs.correlations[i],
+							elmHandleTimer = null,
+							elm = $('&lt;div class="correlation">&lt;/div>')
+								.text( c.tunable )
+								.appendTo( this.elmDescCorrelations );
+
+					}
+				}
+
+				// (Re)typeset math
+				MathJax.typeset( this.elmRightPanel );
+
+			}
+
+			// Show right footer
+			this.elmRightFooter.show();
+
+		}
+
+		/**
+		 * Select a particular histogram 
+		 */
+		OverlayHistograms.prototype.selectHistogram = function( id ) {
+
+			// Deselect currently selected histogram
+			if (this.selectedHistogram) {
+				// Get histogram
+				var record = this.histogramIndex[this.selectedHistogram];
+				if (record) {
+					record.dom.removeClass("selected");
+				}
+				// Deactivate
+				this.selectedHistogram = "";
+			}
+
+			// If we have no ID, just deselect
+			if (!id) return;
+
+			// Activate the specified ID
+			var record = this.histogramIndex[id];
+			if (!record) {
+				console.warn("Unable to select missing histogram #"+id);
+				return;
+			}
+
+			// Activate
+			this.selectedHistogram = id;
+			record.dom.addClass("selected");
+
+			// Update description
+			this.updateDescription( record );
+
+		}
+
+		/**
+		 * Add a new histogram 
+		 */
+		OverlayHistograms.prototype.histoCreate = function( id, histogram, obsDetails ) {
+
+			// Create histogram data visualization
+			var domHisto = $('&lt;div class="histogram histo-icon">&lt;/div>').appendTo( this.isotopeContainer ),
+				domLabelName = $('&lt;div class="histo-label-name">&lt;/div>').appendTo( domHisto ),
+				domLabelFit =  $('&lt;div class="histo-label-fit">&lt;/div>').appendTo( domHisto ),
+				domPlotHost = $('&lt;div class="histo-plot-host">&lt;/div>').appendTo( domHisto ),
+				domBtnToggle = $('&lt;div class="histo-btn-expand">&lt;/div>').appendTo( domHisto ),
+				hist = R.instanceComponent("dataviz.histogram_combined", domPlotHost);
+
+			// Select histogram upon clicking on it
+			domHisto.data("hid", id);
+			domHisto.click((function(histoID) {
+				return function(e) {
+					e.preventDefault();
+					e.stopPropagation();
+
+					if (histoID == this.selectedHistogram) {
+						// Perform toggling if already focused
+						domBtnToggle.click();
+					} else {
+						// Otherwise focus
+						this.selectHistogram(histoID);
+					}
+				}				
+			})(id).bind(this));
+
+			// Bind toggle button events
+			domBtnToggle.click((function(histoID) {
+				return function(e) {
+					e.preventDefault();
+					e.stopPropagation();
+
+					if (domHisto.hasClass("histo-icon")) {
+						domHisto.removeClass("histo-icon");
+						domBtnToggle.addClass("expanded")
+					} else {
+						domHisto.addClass("histo-icon");
+						domBtnToggle.removeClass("expanded")
+					}
+
+					// Re-arrange items on isotope upon completion
+					setTimeout((function() {
+						this.updateLayout(true);
+					}).bind(this), 10);
+
+				};
+			})(id).bind(this));
+
+			// Prepare record
+			var record = {
+				'id'   : id,			// Histogram ID
+				'dom'  : domHisto,		// DOM Element
+				'com'  : hist,			// Histogram Component
+				'obs'  : obsDetails,	// Observable details
+				'fit'  : null,			// Current chi-squared fit
+				'nevts': null,			// Number of events
+				'domfl': domLabelFit,	// Fit label DOM element
+			};
+
+			// Store on index and array
+			this.histograms.push(record);
+			this.histogramIndex[id] = record;
+
+			// Add on isotope
+			this.isotopeLayout.appended( domHisto );
+
+			// Update details
+			if (obsDetails) {
+				domLabelName.html(record.obs.title);
+				MathJax.typeset( domLabelName );
+			}
+
+		}
+
+		/**
+		 * Update histogram data
+		 */
+		OverlayHistograms.prototype.histoUpdate = function( id, histogram ) {
+			var record = this.histogramIndex[id];
+
+			// Update histogram
+			record.com.onUpdate( histogram );
+
+			// Update record details
+			record.fit = Calculate.chi2WithError( histogram.data, histogram.ref.data );
+			record.nevts = histogram.data.nevts;
+
+			// Check on which scale is the fit
+			var status_cls;
+			if (record.fit[0] &lt; 1) { // 1 sigma
+				status_cls = "perfect";
+			} else if (record.fit[0] &lt; 4) { // 2 sigma
+				status_cls = "good";
+			} else if (record.fit[0] &lt; 9) { // 3 sigma
+				status_cls = "average";
+			} else {
+				status_cls = "bad";
+			}
+
+			// Update DOM metadata for Isotope layouting
+			record.dom.data("fit", record.fit[0]);
+			record.dom.data("fit-class", status_cls);
+
+			// Update class
+			record.dom.removeClass( "histogram histo-fit-perfect histogram histo-fit-good histogram histo-fit-average histogram histo-fit-bad" );
+			record.dom.addClass( "histogram histo-fit-"+status_cls );
+
+			// If that's focused, update description
+			if (this.selectedHistogram == id)
+				this.updateDescription( record );
+
+			// Update fit label
+			record.domfl.text( record.fit[0].toFixed(2) + ' ± ' + record.fit[1].toFixed(2) );
+
+		}
+
+		/**
+		 * Delete a histogram 
+		 */
+		OverlayHistograms.prototype.histoDelete = function( id ) {
+
+			// Deselect histogram if this is selected
+			if (this.selectedHistogram == id) {
+				this.selectHistogram( false );
+				this.resetDescription();
+			}
+
+			// Lookup record
+			var record = this.histogramIndex[id];
+			if (!record) return;
+
+			// Delete DOM
+			record.dom.remove();
+
+			// Delete record
+			var index = this.histograms.indexOf(record);
+			if (index >= 0) this.histograms.splice(index,1);
+			delete this.histogramIndex[id];
+
+		}
+
+		/**
+		 * Reposition flashDOM on resize
+		 */
+		OverlayHistograms.prototype.onHistogramsDefined = function( histograms ) {
+
+			// Keep a reference with the histograms processed
+			var processed = { },
+				newHistograms = [],
+				newHistoIDs = [];
+
+			// Start by adding missing histograms
+			for (var i=0; i&lt;histograms.length; i++) {
+				var id = histograms[i].id;
+				// Mark as processed
+				processed[id] = true;
+				// Add missing histogram
+				if (this.histogramIndex[id] == undefined) {
+					// Keep the ID and the reference of the histogram
+					// for post-processing
+					newHistograms.push( histograms[i] );
+					newHistoIDs.push( id );
+				} 
+				// Update existing histograms
+				else {
+					this.histoUpdate( id, histograms[i] );
+				}
+			}
+
+			// Delete other missing histograms
+			for (var i=0; i&lt;this.histograms.length; i++) {
+				var id = this.histograms[i].id;
+				// Delete IDs that were not processed
+				if (processed[id] == undefined)
+					this.histoDelete(id);
+			}
+
+			// If we have new histograms, query database to 
+			// fetch details and build histograms
+			if (newHistograms.length > 0) {
+
+				// Query observable information 
+				var Account = APISocket.openAccount();
+				Account.getObservableDetails( newHistoIDs, (function(observables) {
+
+					// Create/update every histogram
+					for (var i=0; i&lt;newHistograms.length; i++) {
+						var id = newHistograms[i].id;
+						// Add histogram
+						this.histoCreate( id, newHistograms[i], observables[id] );
+						// Update histogram
+						this.histoUpdate( id, newHistograms[i] );
+					}
+
+					// Re-run Isotope layout
+					this.isotopeLayout.layout();
+					this.updateLayout(true);
+
+				}).bind(this));
+
+			} else {
+
+				// Update sort data
+				// Re-arrange isotope items
+				this.updateLayout(true);
+
+			}
+
+			// Calculate a hash for analytics details
+			var hashData = "", analyticsHistograms = [];
+			for (var i=0; i&lt;histograms.length; i++) {
+				// Collect ID for checksum calculation
+				if (hashData != "") hashData += ";";
+				hashData += histograms[i].id;
+				analyticsHistograms.push( histograms[i].id );
+			}
+
+			// Store analytics hash id
+			this.checksumID = SHA1.hash( hashData );
+
+			// Fire analytics
+			Analytics.restartTimer("observables")
+			Analytics.fireEvent("observables.shown", {
+				'id': this.checksumID,
+				'histos': analyticsHistograms
+			});
+
+		}
+
+
+		/**
+		 * Reposition flashDOM on resize
+		 */
+		OverlayHistograms.prototype.onWillShow = function( cb ) {
+
+			// Resize histograms to update their UI
+			for (var i=0; i&lt;this.histograms.length; i++) {
+				var com = this.histograms[i].com,
+					w = com.hostDOM.width(),
+					h = com.hostDOM.height();
+				com.onResize(w,h);
+				com.onWillShow(function() {
+					com.onShown();
+				});
+			}
+
+			// Assume shown
+			this.isVisible = true;
+
+			// Reset
+			this.resetDescription();
+
+			// Fire shown
+			cb();
+
+		}
+
+		/**
+		 * Reposition flashDOM on resize
+		 */
+		OverlayHistograms.prototype.onShown = function() {
+
+			// Update layout upon shown
+			this.updateLayout();
+
+		}
+
+
+		/**
+		 * Histograms hidden
+		 */
+		OverlayHistograms.prototype.onHidden = function() {
+			if (!this.isVisible) return;
+
+			// Fire analytics
+			Analytics.fireEvent("observables.hidden", {
+				"id": this.checksumID,
+				"time": Analytics.stopTimer("observables")
+			});
+
+		}
+
+		// Store overlay component on registry
+		R.registerComponent( 'overlay.histograms', OverlayHistograms, 1 );
+
+	}
+
+);</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Modules</h3><ul><li><a href="module-base_components_tuning_observable.html">base/components/tuning/observable</a></li><li><a href="module-base_components_tuning_tunable.html">base/components/tuning/tunable</a></li><li><a href="module-base_components_tuning_tuning_panel.html">base/components/tuning/tuning_panel</a></li><li><a href="module-basic_components_backdrop_explain.html">basic/components/backdrop_explain</a></li><li><a href="module-basic_components_backdrop_globe.html">basic/components/backdrop_globe</a></li><li><a href="module-basic_components_backdrop_home.html">basic/components/backdrop_home</a></li><li><a href="module-basic_components_backdrop_login.html">basic/components/backdrop_login</a></li><li><a href="module-basic_components_backdrop_machine.html">basic/components/backdrop_machine</a></li><li><a href="module-basic_components_backdrop_tuning.html">basic/components/backdrop_tuning</a></li><li><a href="module-basic_components_explain_book.html">basic/components/explain/book</a></li><li><a href="module-basic_components_explain_physics.html">basic/components/explain_physics</a></li><li><a href="module-basic_components_explain_screen.html">basic/components/explain_screen</a></li><li><a href="module-basic_components_nav_mini.html">basic/components/nav_mini</a></li><li><a href="module-basic_components_screem_courseroom.html">basic/components/screem_courseroom</a></li><li><a href="module-basic_components_screem_menu.html">basic/components/screem_menu</a></li><li><a href="module-basic_components_screem_team.html">basic/components/screem_team</a></li><li><a href="module-basic_components_screen_introgame.html">basic/components/screen_introgame</a></li><li><a href="module-basic_components_tvhead_agent.html">basic/components/tvhead_agent</a></li><li><a href="module-core_api_account.html">core/api/account</a></li><li><a href="module-core_api_chatroom.html">core/api/chatroom</a></li><li><a href="module-core_api_course.html">core/api/course</a></li><li><a href="module-core_api_interface.html">core/api/interface</a></li><li><a href="module-core_api_labsocket.html">core/api/labsocket</a></li><li><a href="module-core_api_labtrain.html">core/api/labtrain</a></li><li><a href="module-core_api_team.html">core/api/team</a></li><li><a href="module-core_apisocket.html">core/apisocket</a></li><li><a href="module-core_base_agent.html">core/base/agent</a></li><li><a href="module-core_base_component.html">core/base/component</a></li><li><a href="module-core_base_components.html">core/base/components</a></li><li><a href="module-core_base_data_widget.html">core/base/data_widget</a></li><li><a href="module-core_base_tuning_components.html">core/base/tuning_components</a></li><li><a href="module-core_base_view.html">core/base/view</a></li><li><a href="module-core_data_histogram_meta.html">core/data/histogram_meta</a></li><li><a href="module-core_db.html">core/db</a></li><li><a href="module-core_developer.html">core/developer</a></li><li><a href="module-core_feedback.html">core/feedback</a></li><li><a href="module-core_global.html">core/global</a></li><li><a href="module-core_modules_easing.html">core/modules/easing</a></li><li><a href="module-core_registry.html">core/registry</a></li><li><a href="module-core_ui.html">core/ui</a></li><li><a href="module-core_user.html">core/user</a></li><li><a href="module-core_util_animator.html">core/util/animator</a></li><li><a href="module-core_util_event_base.html">core/util/event_base</a></li><li><a href="module-core_util_math.html">core/util/math</a></li><li><a href="module-core_util_progress_aggregator.html">core/util/progress_aggregator</a></li><li><a href="module-liveq_BufferReader.html">liveq/BufferReader</a></li><li><a href="module-liveq_Calculate.html">liveq/Calculate</a></li><li><a href="module-liveq_HistogramData.html">liveq/HistogramData</a></li><li><a href="module-liveq_LabProtocol.html">liveq/LabProtocol</a></li><li><a href="module-liveq_LabSocket.html">liveq/LabSocket</a></li><li><a href="module-liveq_main.html">liveq/main</a></li><li><a href="module-liveq_ReferenceData.html">liveq/ReferenceData</a></li><li><a href="module-vas-basic_components_onscreen.html">vas-basic/components/onscreen</a></li><li><a href="module-vas-basic_components_running_screen.html">vas-basic/components/running_screen</a></li><li><a href="module-vas-basic_components_screen_bsod.html">vas-basic/components/screen_bsod</a></li><li><a href="module-vas-basic_components_tuning_screen.html">vas-basic/components/tuning_screen</a></li><li><a href="module-vas-basic_data_trainhisto.html">vas-basic/data/trainhisto</a></li><li><a href="module-vas-basic_dataviz_histogram.html">vas-basic/dataviz/histogram</a></li><li><a href="module-vas-basic_dataviz_histogram_full.html">vas-basic/dataviz/histogram_full</a></li><li><a href="module-vas-basic_dataviz_observable.html">vas-basic/dataviz/observable</a></li><li><a href="module-vas-basic_infoblock_knowledge.html">vas-basic/infoblock/knowledge</a></li><li><a href="module-vas-basic_infoblock_observable.html">vas-basic/infoblock/observable</a></li><li><a href="module-vas-basic_infoblock_tunable.html">vas-basic/infoblock/tunable</a></li><li><a href="module-vas-basic_machineparts_describe.html">vas-basic/machineparts/describe</a></li><li><a href="module-vas-basic_machineparts_paper.html">vas-basic/machineparts/paper</a></li><li><a href="module-vas-basic_machineparts_results.html">vas-basic/machineparts/results</a></li><li><a href="module-vas-basic_overlay_buy.html">vas-basic/overlay/buy</a></li><li><a href="module-vas-basic_overlay_feedback.html">vas-basic/overlay/feedback</a></li><li><a href="module-vas-basic_overlay_flash.html">vas-basic/overlay/flash</a></li><li><a href="module-vas-basic_overlay_jobstatus.html">vas-basic/overlay/jobstatus</a></li><li><a href="module-vas-basic_overlay_publicpapers.html">vas-basic/overlay/publicpapers</a></li><li><a href="module-vas-basic_overlay_SwitchTeam.html">vas-basic/overlay/SwitchTeam</a></li><li><a href="module-vas-basic_overlays_help.html">vas-basic/overlays/help</a></li><li><a href="module-vas-basic_profileparts_achievements.html">vas-basic/profileparts/achievements</a></li><li><a href="module-vas-basic_profileparts_books.html">vas-basic/profileparts/books</a></li><li><a href="module-vas-basic_profileparts_papers.html">vas-basic/profileparts/papers</a></li><li><a href="module-vas-basic_profileparts_team.html">vas-basic/profileparts/team</a></li><li><a href="module-vas-basic_profileparts_user.html">vas-basic/profileparts/user</a></li></ul><h3>Classes</h3><ul><li><a href="LiveQ.HistogramData.html">HistogramData</a></li><li><a href="module-basic_components_backdrop_explain-ExplainBackdrop.html">ExplainBackdrop</a></li><li><a href="module-basic_components_backdrop_globe-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-basic_components_backdrop_home-HomeBackdrop.html">HomeBackdrop</a></li><li><a href="module-basic_components_backdrop_home-PaswordReset.html">PaswordReset</a></li><li><a href="module-basic_components_backdrop_login-LoginBackdrop.html">LoginBackdrop</a></li><li><a href="module-basic_components_backdrop_machine-MachineBackdrop.html">MachineBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ProgressBackdrop.html">ProgressBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ResultsBackdrop.html">ResultsBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-TuningBackdrop.html">TuningBackdrop</a></li><li><a href="module-basic_components_explain_book-ExplainBook.html">ExplainBook</a></li><li><a href="module-basic_components_explain_physics-ExplainBlackboard.html">ExplainBlackboard</a></li><li><a href="module-basic_components_explain_physics-ExplainPhysics.html">ExplainPhysics</a></li><li><a href="module-basic_components_explain_screen-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-basic_components_explain_screen-HomeScreen.html">HomeScreen</a></li><li><a href="module-basic_components_explain_screen-JobsScreen.html">JobsScreen</a></li><li><a href="module-basic_components_explain_screen-KnowledgeScreen.html">KnowledgeScreen</a></li><li><a href="module-basic_components_explain_screen-StatsTutorial.html">StatsTutorial</a></li><li><a href="module-basic_components_explain_screen-TuningScreen.html">TuningScreen</a></li><li><a href="module-basic_components_nav_mini-NavMini.html">NavMini</a></li><li><a href="module-basic_components_screem_courseroom-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-basic_components_screem_menu-MenuScreen.html">MenuScreen</a></li><li><a href="module-basic_components_screem_team-TeamScreen.html">TeamScreen</a></li><li><a href="module-basic_components_screen_introgame-IntroGameScreen.html">IntroGameScreen</a></li><li><a href="module-basic_components_tvhead_agent-TVhead.html">TVhead</a></li><li><a href="module-core_base_agent-VisualAgent.html">VisualAgent</a></li><li><a href="module-core_base_components-Backdrop.html">Backdrop</a></li><li><a href="module-core_base_components-BookScreen.html">BookScreen</a></li><li><a href="module-core_base_components-BSODScreen.html">BSODScreen</a></li><li><a href="module-core_base_components-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-core_base_components-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-core_base_components-ExplainScreen.html">ExplainScreen</a></li><li><a href="module-core_base_components-HomeScreen.html">HomeScreen</a></li><li><a href="module-core_base_components-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-core_base_components-LoginScreen.html">LoginScreen</a></li><li><a href="module-core_base_components-Nav.html">Nav</a></li><li><a href="module-core_base_components-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-core_base_components-PasswordResetScreen.html">PasswordResetScreen</a></li><li><a href="module-core_base_components-Popup.html">Popup</a></li><li><a href="module-core_base_components-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-core_base_components-QuestionaireScreen.html">QuestionaireScreen</a></li><li><a href="module-core_base_components-RegisterScreen.html">RegisterScreen</a></li><li><a href="module-core_base_components-ResultsScreen.html">ResultsScreen</a></li><li><a href="module-core_base_components-RunningScreen.html">RunningScreen</a></li><li><a href="module-core_base_components-TeamScreen.html">TeamScreen</a></li><li><a href="module-core_base_components-TuningScreen.html">TuningScreen</a></li><li><a href="module-core_base_components-TutorialScreen.html">TutorialScreen</a></li><li><a href="module-core_base_component-Component.html">Component</a></li><li><a href="module-core_base_data_widget-DataWidget.html">DataWidget</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html">ObservableWidget</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html">TunableWidget</a></li><li><a href="module-core_base_tuning_components-TuningPanel.html">TuningPanel</a></li><li><a href="module-core_base_view-View.html">View</a></li><li><a href="module-core_data_histogram_meta-HistogramMetadata.html">HistogramMetadata</a></li><li><a href="module-core_util_animator-Animator.html">Animator</a></li><li><a href="module-core_util_event_base-EventBase.html">EventBase</a></li><li><a href="module-core_util_math-CoreMath.html">CoreMath</a></li><li><a href="module-core_util_progress_aggregator-ProgressAggregator.html">ProgressAggregator</a></li><li><a href="module-liveq_BufferReader-BufferReader.html">BufferReader</a></li><li><a href="module-liveq_HistogramData-HistogramData.html">HistogramData</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html">LabProtocol</a></li><li><a href="module-liveq_LabSocket-LabSocket.html">LabSocket</a></li><li><a href="module-liveq_ReferenceData-ReferenceData.html">ReferenceData</a></li><li><a href="module-vas-basic_components_running_screen-LoginScreen.html">LoginScreen</a></li><li><a href="module-vas-basic_components_running_screen-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-BSODScreen.html">BSODScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-vas-basic_dataviz_histogram-PlotHistogram.html">PlotHistogram</a></li><li><a href="Sequencer.html">Sequencer</a></li></ul><h3>Events</h3><ul><li><a href="module-core_api_labsocket-APILabSocket.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runError">runError</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:completed">completed</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:runError">runError</a></li><li><a href="module-core_base_components-CinematicScreen.html#event:completed">completed</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openGame">openGame</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openURL">openURL</a></li><li><a href="module-core_base_components-HomeScreen.html#event:changeScreen">changeScreen</a></li><li><a href="module-core_base_components-HomeScreen.html#event:playLevel">playLevel</a></li><li><a href="module-core_base_components-LoginScreen.html#event:login">login</a></li><li><a href="module-core_base_components-RunningScreen.html#event:abortRun">abortRun</a></li><li><a href="module-core_base_components-TuningScreen.html#event:changeParameters">changeParameters</a></li><li><a href="module-core_base_components-TuningScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-TuningScreen.html#event:submitParameters">submitParameters</a></li><li><a href="module-core_base_data_widget-DataWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:blurVisualAid">blurVisualAid</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:completed">completed</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:focusVisualAid">focusVisualAid</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:dataArrived">dataArrived</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramAdded">histogramAdded</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramRemoved">histogramRemoved</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramsUpdated">histogramsUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramUpdated">histogramUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:metadataUpdated">metadataUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:ready">ready</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:connected">connected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:error">error</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:log">log</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runError">runError</a></li></ul><h3>Namespaces</h3><ul><li><a href="module-liveq_Calculate-Calculate.html">Calculate</a></li></ul><h3>Global</h3><ul><li><a href="global.html#chi2-bounds">chi2-bounds</a></li><li><a href="global.html#core">core</a></li><li><a href="global.html#css">css</a></li><li><a href="global.html#db">db</a></li><li><a href="global.html#dom-host">dom-host</a></li><li><a href="global.html#enforce_http">enforce_http</a></li><li><a href="global.html#forum_vas_api">forum_vas_api</a></li><li><a href="global.html#images_url">images_url</a></li><li><a href="global.html#liveq">liveq</a></li><li><a href="global.html#version">version</a></li><li><a href="global.html#voiceapi">voiceapi</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.3.0-beta1</a> on Wed Jul 29 2015 18:29:46 GMT+0200 (CEST)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: vas/basic/js/components/screen_courseroom.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: vas/basic/js/components/screen_courseroom.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>
+define(
+
+	// Requirements
+	["jquery", "vas/core/db", "vas/core/ui", "vas/config", "vas/core/registry", "vas/core/base/components", "vas/core/apisocket", "ccl-tracker"],
+
+	/**
+	 * Basic version of the courseroom screen
+	 *
+	 * @exports basic/components/screem_courseroom
+	 */
+	function($, DB, UI, config, R,C, API, Analytics) {
+
+		/**
+		 * @class
+		 * @classdesc The basic home screen
+		 */
+		var CourseroomScene = function( hostDOM ) {
+			C.CourseroomScene.call(this, hostDOM);
+
+			// Prepare host
+			hostDOM.addClass("courseroom");
+
+			// Reset properties
+			this.course_id = "";
+			this.visible = false;
+			this.started = false;
+			this.userMap = {};
+
+			// Abort icon
+			var btnHost = $('&lt;div class="menu-icon">&lt;/div>').appendTo(hostDOM),
+				btnForward = $('&lt;div class="navbtn-large navbtn-upper">&lt;span class="glyphicon glyphicon-remove">&lt;/span>&lt;/div>').appendTo(btnHost);
+
+			// Register forward 
+			btnForward.click((function() {
+				this.trigger('completed');
+				this.trigger('sequence.next', 'completed'); // [SEQUENCING]
+			}).bind(this));
+
+			// ---------------------------------
+			// Create screen
+			// ---------------------------------
+
+			// Create presentation monitor
+			this.eMonitor = $('&lt;div class="monitor">&lt;/div>').appendTo(hostDOM);
+
+			// Create video player
+			this.createExplainScreen();
+
+			// Create countdown clock
+			this.eCountdown = $('&lt;div class="countdown">&lt;/div>').appendTo(this.eMonitor);
+			this.eCountTitle = $('&lt;h5>Course starts in&lt;/h5>').appendTo(this.eCountdown);
+			this.eCountTimer = $('&lt;p>00:00&lt;/p>').appendTo(this.eCountdown);
+
+			// ---------------------------------
+			// Create amphitheater
+			// ---------------------------------
+
+			// Prepare amphitheater
+			this.eChairs =  $('&lt;div class="chat-chairs">&lt;/div>').appendTo(hostDOM);
+			this.eChatBox = $('&lt;div class="chat-box">&lt;/div>').appendTo(hostDOM);
+
+			// Setup chatbox
+			var chatHost =  $('&lt;div class="chat-input">&lt;/div>').appendTo(this.eChatBox);
+			this.eInput =   $('&lt;input placeholder="Share your thoughts..." />').appendTo(chatHost);
+			this.eSend =    $('&lt;button>Send&lt;/button>').appendTo(this.eChatBox);
+
+			// Setup events
+			this.eSend.click((function(e) {
+				var txt = this.eInput.val();
+				this.eInput.val("");
+				this.chat.send(txt);
+
+				// Fire chatroom send event (no details)
+				Analytics.fireEvent("course.chat_send", {
+					"id": this.course_id
+				});
+
+			}).bind(this));
+			this.eInput.keypress((function(e) {
+				if (e.keyCode == 13) {
+					e.preventDefault();
+					e.stopPropagation();
+					this.eSend.click();
+				}
+			}).bind(this));
+
+			// Populate chairs
+			this.eChairRows = [];
+			this.eChairUsers = [];
+			this.eChairUsers.push( $('&lt;div class="chat-user">&lt;/div>' ).appendTo(this.eChairs) );
+			this.eChairRows.push(  $('&lt;div class="chat-row">&lt;/div>'  ).appendTo(this.eChairs) );
+			this.eChairUsers.push( $('&lt;div class="chat-user">&lt;/div>' ).appendTo(this.eChairs) );
+			this.eChairRows.push(  $('&lt;div class="chat-row">&lt;/div>'  ).appendTo(this.eChairs) );
+			this.eChairUsers.push( $('&lt;div class="chat-user">&lt;/div>' ).appendTo(this.eChairs) );
+			this.eChairRows.push(  $('&lt;div class="chat-row">&lt;/div>'  ).appendTo(this.eChairs) );
+
+			// Regenerate user slots
+			this.regenRows();
+
+		}
+		CourseroomScene.prototype = Object.create( C.CourseroomScene.prototype );
+
+		/**
+		 * Initialize procedural presentation video
+		 */
+		CourseroomScene.prototype.createExplainScreen = function() {
+
+			var com = R.instanceComponent("explain.blackboard", this.eMonitor);
+
+			if (!com) {
+				console.warn("CourseroomScene: Unable to ininitalize explain blackboard!");
+				explainBlackboard.remove();
+				return;
+			} else {
+
+				// Initialize component
+				this.explainComponent = com;
+
+				// Adopt &amp; Forward events
+				this.forwardVisualEvents( com );
+				this.adoptEvents( com );
+
+				// Handle events
+				com.on('animationCompleted', (function() {
+					if (!this.started) return;
+					this.trigger('completed');
+					this.trigger('sequence.next', 'completed'); // [SEQUENCING]
+
+				}).bind(this));
+
+			}
+
+		}
+
+		////////////////////////////////////////////////////////////////////
+		// Helper functions
+		////////////////////////////////////////////////////////////////////
+
+
+		/**
+		 * Load explain scene
+		 */
+		CourseroomScene.prototype.loadAnimation = function(id, cb) {
+
+			// Load animations for the explain scene
+			var db = DB.openTable("animations");
+			db.get(id, (function(doc, err) {
+				if (!doc) {
+					// TODO: Show error
+				} else {
+					this.explainComponent.onAnimationUpdated( doc, cb );
+					this.explainComponent.onAnimationStop();
+				}
+			}).bind(this));
+			
+		}
+
+		/**
+		 * Start screen animation
+		 */
+		CourseroomScene.prototype.playAnimation = function() {
+			// Start animation
+			this.explainComponent.onAnimationStart();
+			// Hide all first-time aids previously shown
+			UI.hideAllfirstTimeAids();
+			// We are now started
+			this.started = true;
+			// Fire analytics
+			Analytics.fireEvent("course.start", {
+				'id': this.course_id
+			});
+		}
+
+		/**
+		 * Stop screen animation
+		 */
+		CourseroomScene.prototype.stopAnimation = function() {
+			// We are now stopped
+			this.started = false;
+			// Stop animation
+			this.explainComponent.onAnimationStop();
+		}
+
+		/**
+		 * Realign rows
+		 */
+		CourseroomScene.prototype.realignRows = function() {
+			for (var i=0; i&lt;this.eChairRows.length; i++) {
+				var w = this.eChairRows[i].width();
+				this.eChairRows[i].css({
+					'left': (this.width - w) / 2
+				});
+				this.eChairUsers[i].css({
+					'left': (this.width - w) / 2
+				});
+			}
+		}
+
+		/**
+		 * Regenerate machine layout
+		 */
+		CourseroomScene.prototype.regenRows = function() {
+			var rows = [10,11,12],
+				bottom = 64, rowW = 68, rowH = 50;
+
+			// Reset user slots
+			this.userSlots = [];
+
+			// Create user slots
+			for (var i=rows.length-1; i>=0; i--) {
+				this.eChairRows[i].css({
+					'width': rowW * rows[i],
+					'bottom': bottom
+				});
+				this.eChairUsers[i].css({
+					'width': rowW * rows[i],
+					'bottom': bottom
+				}).empty();
+
+				// Allocate user information
+				for (var j=0; j&lt;rows[i]; j++) {
+					var ref = $('&lt;div>&lt;/div>')
+						.css({
+							'left': rowW*j,
+							'top': 1
+						}).hide()
+						.click((function() {
+							this.showBubble( this.userSlots[parseInt(this.userSlots.length*Math.random())], "Test", "This is some long, long text that could possibly span into multiple lines. Can this thing accommodate this?");
+						}).bind(this))
+						.appendTo(this.eChairUsers[i])
+
+					// Put user in the slot
+					this.userSlots.push(ref);
+				}
+				bottom += rowH;
+			}
+
+			// Realign rows
+			this.realignRows();
+
+		}
+
+		/**
+		 * Recursively lookup element position
+		 */
+		CourseroomScene.prototype.elementPosition = function(ref) {
+			var pos = { 'left': 0, 'top': 0 }, elm = ref;
+			while (true) {
+				// Get position
+				var p = elm.position();
+				if ((p.left == 0) &amp;&amp; (p.top == 0)) break;
+				pos.left += p.left;
+				pos.top += p.top;
+				elm = elm.parent();
+			}
+			return pos;
+		}
+
+		/**
+		 * Show chat bubble
+		 */
+		CourseroomScene.prototype.showBubble = function(elm,title,chat) {
+
+			// Create a new chat bubble
+			var chatElm = $('&lt;div class="chat_bubble">&lt;/div>').appendTo(this.hostDOM);
+			$('&lt;strong>&lt;/strong>').text("["+title+"]: ").appendTo(chatElm);
+			$('&lt;span>&lt;/span>').text(chat).appendTo(chatElm);
+
+			// Align chat bubble
+			var pos = this.elementPosition(elm),
+				rw = elm.width()
+				w = chatElm.width(), h = chatElm.height();
+			chatElm.css({
+				'left': pos.left + rw/2 - w/2 - 4,
+				'top': pos.top - h - 15
+			});
+
+			setTimeout(function() {
+			chatElm.fadeOut(function() {
+				chatElm.remove();
+			})
+			}, 5000);
+		}
+
+		/**
+		 * Enable and allocate a new slot for the given user
+		 */
+		CourseroomScene.prototype.getUserAvatar = function(user) {
+			
+			// Check if a slot is already cached
+			if (this.userMap[user] != undefined) 
+				return this.userSlots[this.userMap[user]];
+
+			// Pick a free slot
+			var i = Math.floor( this.userSlots.length * Math.random() );
+			for (var j=0; j&lt;this.userSlots.length; j++) {
+				if (!this.userSlots[i].is(":visible")) {
+					this.userMap[user] = i;
+					this.userSlots[i].fadeIn();
+					return this.userSlots[i];
+				} else {
+					if (++i >= this.userSlots.length) i=0;
+				}
+			}
+
+			// We ran out of space for avatars... sorry :(
+			return null;
+
+		}
+
+		/**
+		 * Release and free the user
+		 */
+		CourseroomScene.prototype.freeUserAvatar = function(user) {
+			// Check if a slot is already cached
+			if (this.userMap[user] != undefined) {
+				this.userSlots[this.userMap[user]].fadeOut();
+				delete this.userMap[user];
+			}
+		}
+
+		/**
+		 * Set timer value using seconds given
+		 */
+		CourseroomScene.prototype.setTimer = function(seconds) {
+			var	min = String(Math.floor(seconds / 60)),
+				sec = String(Math.round(seconds % 60));
+
+			// Prepend zeroes
+			if (min.length == 1) min = "0"+min;
+			if (sec.length == 1) sec = "0"+sec;
+
+			// Update counter
+			this.eCountTimer.text(min+":"+sec);
+
+		}
+
+		/**
+		 * Start course timer
+		 */
+		CourseroomScene.prototype.startCourseTimer = function(seconds) {
+
+			// Set initial value
+			var timeLeft = seconds;
+			this.setTimer(seconds);
+
+			// Start incrementing
+			this.stopCourseTimer();
+			this.courseTimer = setInterval((function() {
+				timeLeft -= 1;
+				this.setTimer(timeLeft);
+				if (timeLeft == 0) {
+					this.stopCourseTimer();
+				}
+			}).bind(this), 1000);
+		}
+
+		/**
+		 * Stop course timer
+		 */
+		CourseroomScene.prototype.stopCourseTimer = function(seconds) {
+			// Stop the interval
+			clearInterval(this.courseTimer);
+		}
+
+		////////////////////////////////////////////////////////////////////
+		// Event handlers
+		////////////////////////////////////////////////////////////////////
+
+
+		/**
+		 * Resize courseroom
+		 */
+		CourseroomScene.prototype.onResize = function(w,h) {
+			C.CourseroomScene.prototype.onResize.call(this, w, h);
+
+			// Realign rows
+			this.realignRows();
+
+			// Realign viewing screen
+			var pad = 5,
+				h = this.height - pad*2 - 236 - 5
+				w = 800*h/450,
+				l = (this.width - w) / 2,
+				t = 5;
+
+			// Resize
+			this.eMonitor.css({
+				'left': l,
+				'top': t,
+				'width': w,
+				'height': h
+			});
+
+			// Resize monitor component
+			if (this.explainComponent) {
+				this.explainComponent.onResize(w,h);
+			}
+
+		}
+
+		/**
+		 * Define course
+		 */
+		CourseroomScene.prototype.onCourseDefined = function(course_id) {
+
+			// Store course ID
+			// (Will be initialized onWillShow)
+			this.course_id = course_id;
+
+		}
+
+		/**
+		 * [SEQUENCING] Support sequencing
+		 */
+		CourseroomScene.prototype.onSequenceConfig = function(config, callback) {
+			// Update our course ID
+			this.course_id = config['course'];
+			callback();
+		}
+
+		/**
+		 * Initialize scene before showing
+		 */
+		CourseroomScene.prototype.onWillShow = function(cb) {
+
+			// Reset interface
+			this.userMap = {};
+			this.started = false;
+			for (var i=0; i&lt;this.userSlots.length; i++) {
+				this.userSlots[i].hide();
+			}
+
+			// Fire analytics
+			Analytics.fireEvent("course.show", {
+				'id': this.course_id
+			});
+
+			// Load animation
+			this.visible = true;
+			this.loadAnimation(this.course_id, (function() {
+
+				// Stop animation
+				this.stopAnimation();
+				// And be forceful
+				setTimeout((function() {
+					this.stopAnimation();
+				}).bind(this), 500);
+
+				// If we are sure the animation is stopped, launch course config
+				setTimeout((function() {
+
+					// Open course &amp; bind events
+					var course = this.course = API.openCourse(this.course_id);
+					course.on('info', (function(data) { 
+						if (!this.visible) return;
+						// Fetch course information
+						this.startCourseTimer(data['time']);
+					}).bind(this));
+					course.on('sync', (function(data) { 
+						if (!this.visible) return;
+						// Start course
+						this.eCountdown.fadeOut();
+						this.playAnimation();
+					}).bind(this));
+
+					// Open chatroom &amp; bind events
+					var chat = this.chat = API.openChatroom("course-"+this.course_id);
+					chat.on('join', (function(data) {
+						// Allocate new avatar on join
+						this.getUserAvatar(data['user']);
+					}).bind(this));
+					chat.on('leave', (function(data) {
+						// Release avatar on exit
+						this.freeUserAvatar(data['user']);
+					}).bind(this));
+					chat.on('chat', (function(data) {
+						// Show speech bubble on chat
+						var user = this.getUserAvatar(data['user']);
+						if (user) this.showBubble(user, data['user'], data['message']);
+					}).bind(this));
+
+					// Fire callback
+					cb();
+
+				}).bind(this));
+
+			}).bind(this));
+
+		}
+
+
+		/**
+		 * Stop and cleanup before exit
+		 */
+		CourseroomScene.prototype.onWillHide = function(cb) {
+
+			// Fire analytics % of completion
+			if (this.started) {
+				Analytics.fireEvent("course.percent", {
+					'id': this.course_id,
+					'percent': this.explainComponent.getNormalizedPosition()
+				});
+			}
+
+			this.stopAnimation();
+			this.visible = false;
+			cb();
+		}
+
+		// Register home screen
+		R.registerComponent( "screen.courseroom", CourseroomScene, 1 );
+
+	}
+
+);
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Modules</h3><ul><li><a href="module-base_components_tuning_observable.html">base/components/tuning/observable</a></li><li><a href="module-base_components_tuning_tunable.html">base/components/tuning/tunable</a></li><li><a href="module-base_components_tuning_tuning_panel.html">base/components/tuning/tuning_panel</a></li><li><a href="module-basic_components_backdrop_explain.html">basic/components/backdrop_explain</a></li><li><a href="module-basic_components_backdrop_globe.html">basic/components/backdrop_globe</a></li><li><a href="module-basic_components_backdrop_home.html">basic/components/backdrop_home</a></li><li><a href="module-basic_components_backdrop_login.html">basic/components/backdrop_login</a></li><li><a href="module-basic_components_backdrop_machine.html">basic/components/backdrop_machine</a></li><li><a href="module-basic_components_backdrop_tuning.html">basic/components/backdrop_tuning</a></li><li><a href="module-basic_components_explain_book.html">basic/components/explain/book</a></li><li><a href="module-basic_components_explain_physics.html">basic/components/explain_physics</a></li><li><a href="module-basic_components_explain_screen.html">basic/components/explain_screen</a></li><li><a href="module-basic_components_nav_mini.html">basic/components/nav_mini</a></li><li><a href="module-basic_components_screem_courseroom.html">basic/components/screem_courseroom</a></li><li><a href="module-basic_components_screem_menu.html">basic/components/screem_menu</a></li><li><a href="module-basic_components_screem_team.html">basic/components/screem_team</a></li><li><a href="module-basic_components_screen_introgame.html">basic/components/screen_introgame</a></li><li><a href="module-basic_components_tvhead_agent.html">basic/components/tvhead_agent</a></li><li><a href="module-core_api_account.html">core/api/account</a></li><li><a href="module-core_api_chatroom.html">core/api/chatroom</a></li><li><a href="module-core_api_course.html">core/api/course</a></li><li><a href="module-core_api_interface.html">core/api/interface</a></li><li><a href="module-core_api_labsocket.html">core/api/labsocket</a></li><li><a href="module-core_api_labtrain.html">core/api/labtrain</a></li><li><a href="module-core_api_team.html">core/api/team</a></li><li><a href="module-core_apisocket.html">core/apisocket</a></li><li><a href="module-core_base_agent.html">core/base/agent</a></li><li><a href="module-core_base_component.html">core/base/component</a></li><li><a href="module-core_base_components.html">core/base/components</a></li><li><a href="module-core_base_data_widget.html">core/base/data_widget</a></li><li><a href="module-core_base_tuning_components.html">core/base/tuning_components</a></li><li><a href="module-core_base_view.html">core/base/view</a></li><li><a href="module-core_data_histogram_meta.html">core/data/histogram_meta</a></li><li><a href="module-core_db.html">core/db</a></li><li><a href="module-core_developer.html">core/developer</a></li><li><a href="module-core_feedback.html">core/feedback</a></li><li><a href="module-core_global.html">core/global</a></li><li><a href="module-core_modules_easing.html">core/modules/easing</a></li><li><a href="module-core_registry.html">core/registry</a></li><li><a href="module-core_ui.html">core/ui</a></li><li><a href="module-core_user.html">core/user</a></li><li><a href="module-core_util_animator.html">core/util/animator</a></li><li><a href="module-core_util_event_base.html">core/util/event_base</a></li><li><a href="module-core_util_math.html">core/util/math</a></li><li><a href="module-core_util_progress_aggregator.html">core/util/progress_aggregator</a></li><li><a href="module-liveq_BufferReader.html">liveq/BufferReader</a></li><li><a href="module-liveq_Calculate.html">liveq/Calculate</a></li><li><a href="module-liveq_HistogramData.html">liveq/HistogramData</a></li><li><a href="module-liveq_LabProtocol.html">liveq/LabProtocol</a></li><li><a href="module-liveq_LabSocket.html">liveq/LabSocket</a></li><li><a href="module-liveq_main.html">liveq/main</a></li><li><a href="module-liveq_ReferenceData.html">liveq/ReferenceData</a></li><li><a href="module-vas-basic_components_onscreen.html">vas-basic/components/onscreen</a></li><li><a href="module-vas-basic_components_running_screen.html">vas-basic/components/running_screen</a></li><li><a href="module-vas-basic_components_screen_bsod.html">vas-basic/components/screen_bsod</a></li><li><a href="module-vas-basic_components_tuning_screen.html">vas-basic/components/tuning_screen</a></li><li><a href="module-vas-basic_data_trainhisto.html">vas-basic/data/trainhisto</a></li><li><a href="module-vas-basic_dataviz_histogram.html">vas-basic/dataviz/histogram</a></li><li><a href="module-vas-basic_dataviz_histogram_full.html">vas-basic/dataviz/histogram_full</a></li><li><a href="module-vas-basic_dataviz_observable.html">vas-basic/dataviz/observable</a></li><li><a href="module-vas-basic_infoblock_knowledge.html">vas-basic/infoblock/knowledge</a></li><li><a href="module-vas-basic_infoblock_observable.html">vas-basic/infoblock/observable</a></li><li><a href="module-vas-basic_infoblock_tunable.html">vas-basic/infoblock/tunable</a></li><li><a href="module-vas-basic_machineparts_describe.html">vas-basic/machineparts/describe</a></li><li><a href="module-vas-basic_machineparts_paper.html">vas-basic/machineparts/paper</a></li><li><a href="module-vas-basic_machineparts_results.html">vas-basic/machineparts/results</a></li><li><a href="module-vas-basic_overlay_buy.html">vas-basic/overlay/buy</a></li><li><a href="module-vas-basic_overlay_feedback.html">vas-basic/overlay/feedback</a></li><li><a href="module-vas-basic_overlay_flash.html">vas-basic/overlay/flash</a></li><li><a href="module-vas-basic_overlay_jobstatus.html">vas-basic/overlay/jobstatus</a></li><li><a href="module-vas-basic_overlay_publicpapers.html">vas-basic/overlay/publicpapers</a></li><li><a href="module-vas-basic_overlay_SwitchTeam.html">vas-basic/overlay/SwitchTeam</a></li><li><a href="module-vas-basic_overlays_help.html">vas-basic/overlays/help</a></li><li><a href="module-vas-basic_profileparts_achievements.html">vas-basic/profileparts/achievements</a></li><li><a href="module-vas-basic_profileparts_books.html">vas-basic/profileparts/books</a></li><li><a href="module-vas-basic_profileparts_papers.html">vas-basic/profileparts/papers</a></li><li><a href="module-vas-basic_profileparts_team.html">vas-basic/profileparts/team</a></li><li><a href="module-vas-basic_profileparts_user.html">vas-basic/profileparts/user</a></li></ul><h3>Classes</h3><ul><li><a href="LiveQ.HistogramData.html">HistogramData</a></li><li><a href="module-basic_components_backdrop_explain-ExplainBackdrop.html">ExplainBackdrop</a></li><li><a href="module-basic_components_backdrop_globe-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-basic_components_backdrop_home-HomeBackdrop.html">HomeBackdrop</a></li><li><a href="module-basic_components_backdrop_home-PaswordReset.html">PaswordReset</a></li><li><a href="module-basic_components_backdrop_login-LoginBackdrop.html">LoginBackdrop</a></li><li><a href="module-basic_components_backdrop_machine-MachineBackdrop.html">MachineBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ProgressBackdrop.html">ProgressBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-ResultsBackdrop.html">ResultsBackdrop</a></li><li><a href="module-basic_components_backdrop_tuning-TuningBackdrop.html">TuningBackdrop</a></li><li><a href="module-basic_components_explain_book-ExplainBook.html">ExplainBook</a></li><li><a href="module-basic_components_explain_physics-ExplainBlackboard.html">ExplainBlackboard</a></li><li><a href="module-basic_components_explain_physics-ExplainPhysics.html">ExplainPhysics</a></li><li><a href="module-basic_components_explain_screen-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-basic_components_explain_screen-HomeScreen.html">HomeScreen</a></li><li><a href="module-basic_components_explain_screen-JobsScreen.html">JobsScreen</a></li><li><a href="module-basic_components_explain_screen-KnowledgeScreen.html">KnowledgeScreen</a></li><li><a href="module-basic_components_explain_screen-StatsTutorial.html">StatsTutorial</a></li><li><a href="module-basic_components_explain_screen-TuningScreen.html">TuningScreen</a></li><li><a href="module-basic_components_nav_mini-NavMini.html">NavMini</a></li><li><a href="module-basic_components_screem_courseroom-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-basic_components_screem_menu-MenuScreen.html">MenuScreen</a></li><li><a href="module-basic_components_screem_team-TeamScreen.html">TeamScreen</a></li><li><a href="module-basic_components_screen_introgame-IntroGameScreen.html">IntroGameScreen</a></li><li><a href="module-basic_components_tvhead_agent-TVhead.html">TVhead</a></li><li><a href="module-core_base_agent-VisualAgent.html">VisualAgent</a></li><li><a href="module-core_base_components-Backdrop.html">Backdrop</a></li><li><a href="module-core_base_components-BookScreen.html">BookScreen</a></li><li><a href="module-core_base_components-BSODScreen.html">BSODScreen</a></li><li><a href="module-core_base_components-CinematicScreen.html">CinematicScreen</a></li><li><a href="module-core_base_components-CourseroomScene.html">CourseroomScene</a></li><li><a href="module-core_base_components-ExplainScreen.html">ExplainScreen</a></li><li><a href="module-core_base_components-HomeScreen.html">HomeScreen</a></li><li><a href="module-core_base_components-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-core_base_components-LoginScreen.html">LoginScreen</a></li><li><a href="module-core_base_components-Nav.html">Nav</a></li><li><a href="module-core_base_components-ObservableScreen.html">ObservableScreen</a></li><li><a href="module-core_base_components-PasswordResetScreen.html">PasswordResetScreen</a></li><li><a href="module-core_base_components-Popup.html">Popup</a></li><li><a href="module-core_base_components-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-core_base_components-QuestionaireScreen.html">QuestionaireScreen</a></li><li><a href="module-core_base_components-RegisterScreen.html">RegisterScreen</a></li><li><a href="module-core_base_components-ResultsScreen.html">ResultsScreen</a></li><li><a href="module-core_base_components-RunningScreen.html">RunningScreen</a></li><li><a href="module-core_base_components-TeamScreen.html">TeamScreen</a></li><li><a href="module-core_base_components-TuningScreen.html">TuningScreen</a></li><li><a href="module-core_base_components-TutorialScreen.html">TutorialScreen</a></li><li><a href="module-core_base_component-Component.html">Component</a></li><li><a href="module-core_base_data_widget-DataWidget.html">DataWidget</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html">ObservableWidget</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html">TunableWidget</a></li><li><a href="module-core_base_tuning_components-TuningPanel.html">TuningPanel</a></li><li><a href="module-core_base_view-View.html">View</a></li><li><a href="module-core_data_histogram_meta-HistogramMetadata.html">HistogramMetadata</a></li><li><a href="module-core_util_animator-Animator.html">Animator</a></li><li><a href="module-core_util_event_base-EventBase.html">EventBase</a></li><li><a href="module-core_util_math-CoreMath.html">CoreMath</a></li><li><a href="module-core_util_progress_aggregator-ProgressAggregator.html">ProgressAggregator</a></li><li><a href="module-liveq_BufferReader-BufferReader.html">BufferReader</a></li><li><a href="module-liveq_HistogramData-HistogramData.html">HistogramData</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html">LabProtocol</a></li><li><a href="module-liveq_LabSocket-LabSocket.html">LabSocket</a></li><li><a href="module-liveq_ReferenceData-ReferenceData.html">ReferenceData</a></li><li><a href="module-vas-basic_components_running_screen-LoginScreen.html">LoginScreen</a></li><li><a href="module-vas-basic_components_running_screen-ProgressScreen.html">ProgressScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-BSODScreen.html">BSODScreen</a></li><li><a href="module-vas-basic_components_screen_bsod-IPIDEScreen.html">IPIDEScreen</a></li><li><a href="module-vas-basic_dataviz_histogram-PlotHistogram.html">PlotHistogram</a></li><li><a href="Sequencer.html">Sequencer</a></li></ul><h3>Events</h3><ul><li><a href="module-core_api_labsocket-APILabSocket.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-core_api_labsocket-APILabSocket.html#event:runError">runError</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:completed">completed</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:connected">connected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:disconnected">disconnected</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:error">error</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:log">log</a></li><li><a href="module-core_api_labsocket-APILabTrain.html#event:runError">runError</a></li><li><a href="module-core_base_components-CinematicScreen.html#event:completed">completed</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openGame">openGame</a></li><li><a href="module-core_base_components-ExplainScreen.html#event:openURL">openURL</a></li><li><a href="module-core_base_components-HomeScreen.html#event:changeScreen">changeScreen</a></li><li><a href="module-core_base_components-HomeScreen.html#event:playLevel">playLevel</a></li><li><a href="module-core_base_components-LoginScreen.html#event:login">login</a></li><li><a href="module-core_base_components-RunningScreen.html#event:abortRun">abortRun</a></li><li><a href="module-core_base_components-TuningScreen.html#event:changeParameters">changeParameters</a></li><li><a href="module-core_base_components-TuningScreen.html#event:explainParameter">explainParameter</a></li><li><a href="module-core_base_components-TuningScreen.html#event:submitParameters">submitParameters</a></li><li><a href="module-core_base_data_widget-DataWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:blurVisualAid">blurVisualAid</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:completed">completed</a></li><li><a href="module-core_base_data_widget-VisualAgent.html#event:focusVisualAid">focusVisualAid</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-ObservableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:click">click</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:hideDetails">hideDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:showDetails">showDetails</a></li><li><a href="module-core_base_tuning_components-TunableWidget.html#event:valueChanged">valueChanged</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:dataArrived">dataArrived</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramAdded">histogramAdded</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramRemoved">histogramRemoved</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramsUpdated">histogramsUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:histogramUpdated">histogramUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:metadataUpdated">metadataUpdated</a></li><li><a href="module-liveq_LabProtocol-LabProtocol.html#event:ready">ready</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:connected">connected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:disconnected">disconnected</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:error">error</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:log">log</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runCompleted">runCompleted</a></li><li><a href="module-liveq_LabSocket-LabSocket.html#event:runError">runError</a></li></ul><h3>Namespaces</h3><ul><li><a href="module-liveq_Calculate-Calculate.html">Calculate</a></li></ul><h3>Global</h3><ul><li><a href="global.html#chi2-bounds">chi2-bounds</a></li><li><a href="global.html#core">core</a></li><li><a href="global.html#css">css</a></li><li><a href="global.html#db">db</a></li><li><a href="global.html#dom-host">dom-host</a></li><li><a href="global.html#enforce_http">enforce_http</a></li><li><a href="global.html#forum_vas_api">forum_vas_api</a></li><li><a href="global.html#images_url">images_url</a></li><li><a href="global.html#liveq">liveq</a></li><li><a href="global.html#version">version</a></li><li><a href="global.html#voiceapi">voiceapi</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.3.0-beta1</a> on Wed Jul 29 2015 18:29:46 GMT+0200 (CEST)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>
