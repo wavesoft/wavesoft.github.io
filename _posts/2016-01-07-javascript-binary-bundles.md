@@ -217,9 +217,7 @@ Therefore I decided to be smarter on the way I encode objects, and decided to us
 with information about how to construct and how to extract information 
 from a predefined set of objects.
 
-Having this in place, the encoding speed -and more importantly- the resulting size is **considerably****smaller**.
- Behind the scenes, the object is encoded with it's index on the ToKO 
-and an array with it's properties (further optimized as seen before).
+Having this in place, the encoding speed -and more importantly- the resulting size is **considerably smaller**. Behind the scenes, the object is encoded with it's index on the ToKO and an array with it's properties (further optimized as seen before).
 
 ### The JBB Compiler
 
@@ -241,7 +239,7 @@ jbb compiler. It took almost 3 minutes to compile a bundle consisting of
  some UTF8 models and an animated JSON model. The result was two 
 bundles, one for the meshes and one for the textures, totalling **3.1Mb** after a gzip compression. That's not much of a difference from the **3.7Mb** of the original resources. However the loading time was considerably different!
 
-<img src="/img/jbb-loading.png" alt="Loading a JBB Bundle" />
+<img src="/assets/images/jbb-loading.png" alt="Loading a JBB Bundle" />
 
 Performing only 2 requests in the binary bundle version (instead of about 20 in the regular one), the browser loaded the bundle **5 times faster**! 
 
