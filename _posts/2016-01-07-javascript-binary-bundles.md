@@ -99,7 +99,7 @@ As you can see, they happen to be very close to the JavaScript
 language itself, so a serialization of the scene object should be 
 enough! Unfortunately, as far as I know there is no proper serialization
  support in JavaScript, and I didn't want to mess with JSON hacks. 
-Therefore came-up with an efficient serialization mechanism.
+Therefore I had to come-up with a new, efficient serialization mechanism.
 
 ### Creating a JavaScript Serializer
 
@@ -189,16 +189,10 @@ I realized that the big majority of arrays in 3D graphics are
 TypedArrays. So, like any other series of numbers, I could use one of 
 the following:
 
-- **Delta Encoding** (a cool idea borrowed from the UTF8 mesh encoding)_
+- **Delta Encoding** _(a cool idea borrowed from the UTF8 mesh encoding)_
  is used when the values in the array have a small difference (delta) 
-between them. In this case, they are encoded as an array of smaller type
- size. For instance can be encoded as or even if the differences are 
-small. This can also be used with in conjunction with scaled integers 
-(ex. ±*0.001).
-- **Downscaling** is used when the values of an array are
- able to fit on an array with smaller type. Therefore an can be 
-downscaled to or event . The original array type is preserved and 
-restored at decoding.
+between them. In this case, they are encoded as an array of smaller type, containing the differences betwen them. For instance a `INT32` array can be encoded as `INT16` or even `INT8` if the differences are small enough. This can also be used with in conjunction with scaled integers (ex. ±N*0.001).
+- **Downscaling** is used when the values of an array are able to fit on an array with smaller type. Therefore an can be downscaled to `INT16` or event `INT8`. The original array type is preserved and restored at decoding.
 - **Repeated** items are also optimized when the values of the array is simply a single value repeated.
 - Finally, array portions of similar type are grouped together forming **chunks**, with a shared optimization applied to them.
 
