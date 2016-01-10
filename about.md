@@ -1,15 +1,16 @@
 ---
 layout: page
-title: About
-permalink: /about/
+title: About the Author
+class: 'post'
+navigation: True
+logo: 'assets/images/ghost.png'
+current: about
 ---
 
-This is the base Jekyll theme. You can find out more info about customizing your Jekyll theme, as well as basic Jekyll usage documentation at [jekyllrb.com](http://jekyllrb.com/)
+Hello world, I am Ioannis Charalampidis!
 
-You can find the source code for the Jekyll new theme at:
-{% include icon-github.html username="jglovier" %} /
-[jekyll-new](https://github.com/jglovier/jekyll-new)
+Software development is my Passion, my Profession and my Hobby. Yet I am Creative and Artistic, with a major in Architecture Engineering. (Talk about diversity!). I rarely blog, due to lack of time, but when I do, I usually have something interesting to sare with the world!
 
-You can find the source code for Jekyll at
-{% include icon-github.html username="jekyll" %} /
-[jekyll](https://github.com/jekyll/jekyll)
+If you are interested to learn more about me [Visit my LinkedIn Profile](    https://gr.linkedin.com/in/icharalampidis).
+
+This blog is still on it's beta phase. Come back later and more material might be available ;)
