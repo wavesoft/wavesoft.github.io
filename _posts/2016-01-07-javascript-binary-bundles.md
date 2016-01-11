@@ -4,7 +4,7 @@ cover: false
 subclass: 'post tag-speeches'
 navigation: True
 disqus: True
-title:  "Javascript Binary Bundles for the Web"
+title:  "JBB: Javascript Binary Bundles for faster resource loading"
 date:   2016-01-07 21:11:29 +0100
 categories: javascript three.js 3d
 logo: 'assets/images/wavesoft.png'
