@@ -36,7 +36,7 @@ The following table illustrates the bundles and their contents. Click on the num
         <td><code>vrml.jbbsrc</code></td>
         <td>88K</td>
         <td>
-            <a href="https://github.com/wavesoft/jbb-tests/tree/master/bundles/vrml.jbbsrc" target="_blank">2 Files</a>
+            <a href="https://github.com/wavesoft/jbb-tests/tree/master/bundles/vrml.jbbsrc" target="_blank"> 2 </a>
         </td>
         <td>
             VRML is a simple, yet frequently encountered format for 3D models. It should be dead simple for jbb to beat it.
@@ -46,7 +46,7 @@ The following table illustrates the bundles and their contents. Click on the num
         <td><code>animated.jbbsrc</code></td>
         <td>532K</td>
         <td>
-            <a href="https://github.com/wavesoft/jbb-tests/tree/master/bundles/animated.jbbsrc" target="_blank">6 Files</a>
+            <a href="https://github.com/wavesoft/jbb-tests/tree/master/bundles/animated.jbbsrc" target="_blank"> 6 </a>
         </td>
         <td>
             These are some animated models with different complexity. They are encoded as THREE.js JSON objects, which is quite fast to parse.
@@ -56,7 +56,7 @@ The following table illustrates the bundles and their contents. Click on the num
         <td><code>obj.jbbsrc</code></td>
         <td>548K</td>
         <td>
-            <a href="https://github.com/wavesoft/jbb-tests/tree/master/bundles/obj.jbbsrc" target="_blank">3 Files</a>
+            <a href="https://github.com/wavesoft/jbb-tests/tree/master/bundles/obj.jbbsrc" target="_blank"> 3 </a>
         </td>
         <td>
             This is a quite big mesh file, in the widely used Wavefont .obj binary format. Looks like a challenging competitor.
@@ -66,7 +66,7 @@ The following table illustrates the bundles and their contents. Click on the num
         <td><code>heavy.jbbsrcd</code></td>
         <td>3.3M</td>
         <td>
-            <a href="https://github.com/wavesoft/jbb-tests/tree/master/bundles/heavy.jbbsrc" target="_blank">19 Files</a>
+            <a href="https://github.com/wavesoft/jbb-tests/tree/master/bundles/heavy.jbbsrc" target="_blank"> 19 </a>
         </td>
         <td>
             The <code>ben.utf8</code> and <code>hand.utf8</code> are two havey meshes encoded in UTF8 format. This is another well-optimised format for storing high-density meshes and another difficult competitor for jbb.
@@ -76,7 +76,7 @@ The following table illustrates the bundles and their contents. Click on the num
         <td><code>md2.jbbsrc</code></td>
         <td>4.0M</td>
         <td>
-            <a href="https://github.com/wavesoft/jbb-tests/tree/master/bundles/md2.jbbsrc" target="_blank">30 Files</a>
+            <a href="https://github.com/wavesoft/jbb-tests/tree/master/bundles/md2.jbbsrc" target="_blank"> 30 </a>
         </td>
         <td>
             This format is used by Quake II to encode animated models. It's a quite optimised file format, both for size and loading time. This also looks like another good competitor.
